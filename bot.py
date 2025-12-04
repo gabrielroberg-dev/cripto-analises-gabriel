@@ -146,8 +146,8 @@ def run_bot():
                         print("Mensagem enviada para Telegram!")
                         print("="*40)
                         last_signals[key] = result["sinal"]
-        print("Aguardando 60 segundos para próxima verificação...\n")
-        time.sleep(60)  # Atualiza a cada 60 segundos
+        print("Aguardando 5 minutos para próxima verificação...\n")
+        time.sleep(300)  # Atualiza a cada 5 minutos
 
 if __name__ == "__main__":
     run_bot()
