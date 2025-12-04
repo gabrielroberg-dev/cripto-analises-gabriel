@@ -106,7 +106,7 @@ def analyze(symbol, timeframe="1h"):
     }
 
 # ================================
-#  LOOP PRINCIPAL VIP
+#  LOOP PRINCIPAL VIP COM HEARTBEAT
 # ================================
 def run_bot():
     print("🚀 Ultimate VIP Bot iniciado!")
@@ -136,8 +136,10 @@ def run_bot():
                         last_signals[key] = result["sinal"]
                 elif DEBUG:
                     print(f"[INFO] {ativo} {tf}: sem sinal crítico.")
+
+        # Heartbeat para não travar no Render
         if DEBUG:
-            print("Aguardando 5 minutos para próxima verificação...\n")
+            print(f"[{time.strftime('%H:%M:%S')}] Bot rodando... aguardando próximo loop")
         time.sleep(300)  # Atualiza a cada 5 minutos
 
 if __name__ == "__main__":
