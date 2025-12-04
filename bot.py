@@ -8,9 +8,14 @@ API_SECRET = os.getenv("BINANCE_SECRET_KEY")
 BASE_URL = "https://fapi.binance.com"  # Binance Futures API
 
 
-def get_price(symbol="BTCUSDT"):
-    r = requests.get(f"{BASE_URL}/fapi/v1/ticker/price?symbol={symbol}")
-    return float(r.json()["price"])
+def get_price():
+    url = "https://api.binance.com/api/v3/ticker/price"
+    params = {"symbol": "BTCUSDT"}
+
+    r = requests.get(url, params=params)
+    data = r.json()
+
+    return float(data.get("price", 0))
 
 
 def get_funding(symbol="BTCUSDT"):
