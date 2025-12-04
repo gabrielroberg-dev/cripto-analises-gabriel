@@ -10,8 +10,8 @@ BASE_URL = "https://fapi.binance.com"  # Binance Futures API
 # ================================
 #  CONFIGURAÇÃO TELEGRAM
 # ================================
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # ou coloque seu token direto
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")      # ID do chat do Telegram
+BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"  # Seu token do BotFather
+CHAT_ID = 1793725704  # Seu chat_id no Telegram
 
 def send_telegram(message):
     """Envia mensagem para o Telegram"""
