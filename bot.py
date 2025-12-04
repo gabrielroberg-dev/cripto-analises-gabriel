@@ -1,17 +1,13 @@
 import requests
 import time
-import os
-
-API_KEY = os.getenv("BINANCE_API_KEY")
-API_SECRET = os.getenv("BINANCE_SECRET_KEY")
-
-BASE_URL = "https://fapi.binance.com"  # Binance Futures API
+import pandas as pd
+import ta
 
 # ================================
 #  CONFIGURAÇÃO TELEGRAM
 # ================================
-BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"  # Seu token do BotFather
-CHAT_ID = 1793725704  # Seu chat_id no Telegram
+BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
+CHAT_ID = 1793725704
 
 def send_telegram(message):
     """Envia mensagem para o Telegram"""
@@ -23,125 +19,131 @@ def send_telegram(message):
         print("Erro enviando Telegram:", e)
 
 # ================================
-#  FUNÇÕES DE DADOS
+#  ATIVOS E SUPORTE/RESISTÊNCIA
 # ================================
-def get_btc_price():
-    try:
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-        response = requests.get(url, timeout=5)
-        data = response.json()
-        return data["bitcoin"]["usd"]
-    except Exception as e:
-        print("Erro CoinGecko:", e)
+ativos = ["BTC", "ETH", "SOL", "NEAR", "WAVE", "SAGA"]
 
-    # Fallback Binance
-    try:
-        url_binance = f"{BASE_URL}/fapi/v1/ticker/price?symbol=BTCUSDT"
-        r = requests.get(url_binance, timeout=5)
-        data = r.json()
-        return float(data.get("price", 0))
-    except Exception as e:
-        print("Erro Binance:", e)
-        return 0
+suportes_resistencias = {
+    "BTC": {"1h":{"S":[28500,28000],"R":[29500,30000]},
+            "4h":{"S":[28000],"R":[30000]},
+            "1d":{"S":[27000],"R":[31000]},
+            "1w":{"S":[25000],"R":[35000]}},
+    "ETH": {"1h":{"S":[1700],"R":[1800]},
+            "4h":{"S":[1650],"R":[1850]},
+            "1d":{"S":[1600],"R":[1900]},
+            "1w":{"S":[1500],"R":[2000]}},
+    "SOL": {"1h":{"S":[20],"R":[22]},
+            "4h":{"S":[19],"R":[23]},
+            "1d":{"S":[18],"R":[25]},
+            "1w":{"S":[15],"R":[30]}},
+    "NEAR": {"1h":{"S":[2.5],"R":[3.0]},
+             "4h":{"S":[2.4],"R":[3.2]},
+             "1d":{"S":[2.0],"R":[3.5]},
+             "1w":{"S":[1.8],"R":[4.0]}},
+    "WAVE": {"1h":{"S":[0.08],"R":[0.1]},
+             "4h":{"S":[0.07],"R":[0.12]},
+             "1d":{"S":[0.06],"R":[0.15]},
+             "1w":{"S":[0.05],"R":[0.2]}},
+    "SAGA": {"1h":{"S":[0.3],"R":[0.35]},
+             "4h":{"S":[0.28],"R":[0.38]},
+             "1d":{"S":[0.25],"R":[0.4]},
+             "1w":{"S":[0.2],"R":[0.45]}}
+}
 
-
-def get_funding():
+# ================================
+#  PEGAR HISTÓRICO DE PREÇO
+# ================================
+def get_ohlcv(symbol, days=7):
+    coin_id = symbol.lower()
     try:
-        url = f"{BASE_URL}/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc?vs_currency=usd&days={days}"
         r = requests.get(url, timeout=5)
         data = r.json()
-        if isinstance(data, list) and len(data) > 0:
-            return float(data[0].get("fundingRate", 0))
-        return 0
+        df = pd.DataFrame(data, columns=["timestamp","open","high","low","close"])
+        df["close"] = df["close"].astype(float)
+        return df
     except Exception as e:
-        print("Erro funding:", e)
-        return 0
-
-
-def get_open_interest(symbol="BTCUSDT"):
-    try:
-        r = requests.get(f"{BASE_URL}/fapi/v1/openInterest?symbol={symbol}", timeout=5)
-        data = r.json()
-        return float(data.get("openInterest", 0))
-    except Exception as e:
-        print("Erro open interest:", e)
-        return 0
-
-
-def get_liquidations(symbol="BTCUSDT"):
-    try:
-        url = f"{BASE_URL}/futures/data/liquidationOrders?symbol={symbol}&limit=50"
-        r = requests.get(url, timeout=5)
-        data = r.json()
-        if not isinstance(data, list):
-            return 0, 0
-
-        longs = sum(float(x.get("price", 0)) for x in data if x.get("side") == "BUY")
-        shorts = sum(float(x.get("price", 0)) for x in data if x.get("side") == "SELL")
-        return longs, shorts
-    except Exception as e:
-        print("Erro liquidations:", e)
-        return 0, 0
+        print(f"Erro OHLCV {symbol}:", e)
+        return pd.DataFrame()
 
 # ================================
-#  ANÁLISE DE TENDÊNCIA
+#  ANÁLISE TÉCNICA VIP
 # ================================
-def analyze_market(price, funding, longs, shorts):
-    trend = "NEUTRO"
-    if funding > 0:
-        trend = "ALTA 📈"
-    elif funding < 0:
-        trend = "BAIXA 📉"
+def analyze(symbol, timeframe="1h"):
+    df = get_ohlcv(symbol)
+    if df.empty:
+        return None
 
-    liquidation_alert = ""
-    if longs > shorts:
-        liquidation_alert = "⚠️ Muito long sendo liquidado → pressão de baixa."
-    elif shorts > longs:
-        liquidation_alert = "⚠️ Muito short sendo liquidado → pressão de alta."
+    close = df["close"]
+    price = close.iloc[-1]
 
-    return trend, liquidation_alert
+    # Médias móveis
+    ma50 = close.rolling(window=50).mean().iloc[-1]
+    ma200 = close.rolling(window=200).mean().iloc[-1]
+
+    # RSI
+    rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
+
+    # Tendência
+    trend = "ALTA" if ma50 > ma200 else "BAIXA"
+
+    # Suporte e resistência próximos
+    nivel = suportes_resistencias[symbol][timeframe]
+    suporte = min([s for s in nivel["S"] if s <= price] + [nivel["S"][0]])
+    resistencia = min([r for r in nivel["R"] if r >= price] + [nivel["R"][0]])
+
+    # Detecta rompimento de nível
+    sinal = None
+    alerta = None
+    if trend == "ALTA" and price <= suporte and rsi < 35:
+        sinal = "COMPRA ⚡ OPORTUNIDADE CRÍTICA"
+        alerta = True
+    elif trend == "BAIXA" and price >= resistencia and rsi > 65:
+        sinal = "VENDA ⚡ OPORTUNIDADE CRÍTICA"
+        alerta = True
+
+    return {
+        "price": price,
+        "RSI": rsi,
+        "MA50": ma50,
+        "MA200": ma200,
+        "suporte": suporte,
+        "resistencia": resistencia,
+        "trend": trend,
+        "sinal": sinal,
+        "alerta": alerta
+    }
 
 # ================================
-#  LOOP PRINCIPAL
+#  LOOP PRINCIPAL VIP
 # ================================
 def run_bot():
-    print("🚀 Bot iniciado com sucesso! Monitorando BTCUSDT...")
+    print("🚀 Ultimate VIP Bot iniciado!")
 
-    last_trend = None
-    last_liquidation_alert = None
+    last_signals = {}
 
     while True:
-        price = get_btc_price()
-        funding = get_funding()
-        oi = get_open_interest()
-        longs, shorts = get_liquidations()
-
-        trend, liquidation_alert = analyze_market(price, funding, longs, shorts)
-
-        # Só envia mensagem se houver mudança significativa
-        if trend != last_trend or liquidation_alert != last_liquidation_alert:
-            message = (
-                f"📊 *ANÁLISE AUTOMÁTICA - BTCUSDT*\n"
-                f"💰 Preço atual: {price} USD\n"
-                f"📈 Funding rate: {funding}\n"
-                f"📦 Open Interest: {oi}\n"
-                f"🔥 Liquidação LONGS: {longs}\n"
-                f"❄ Liquidação SHORTS: {shorts}\n"
-                f"🔎 Tendência: {trend}\n"
-            )
-            if liquidation_alert:
-                message += f"{liquidation_alert}\n"
-
-            send_telegram(message)
-            print(message)
-            print("=" * 40)
-
-            # Atualiza o estado
-            last_trend = trend
-            last_liquidation_alert = liquidation_alert
-
-        time.sleep(20)  # Atualiza a cada 20s
-
+        for ativo in ativos:
+            for tf in ["1h","4h","1d","1w"]:
+                result = analyze(ativo, timeframe=tf)
+                if result and result["sinal"] and result["alerta"]:
+                    key = f"{ativo}_{tf}"
+                    if last_signals.get(key) != result["sinal"]:
+                        message = (
+                            f"📊 *Sinal Ultimate VIP - {ativo}/USDT*\n"
+                            f"⏱ Timeframe: {tf}\n"
+                            f"💰 Preço: {result['price']}\n"
+                            f"📌 Suporte próximo: {result['suporte']}\n"
+                            f"📌 Resistência próxima: {result['resistencia']}\n"
+                            f"📈 Tendência: {result['trend']}\n"
+                            f"📣 {result['sinal']}\n"
+                            f"RSI: {round(result['RSI'],2)} | MA50: {round(result['MA50'],2)} | MA200: {round(result['MA200'],2)}"
+                        )
+                        send_telegram(message)
+                        print(message)
+                        print("="*40)
+                        last_signals[key] = result["sinal"]
+        time.sleep(1800)  # Atualiza a cada 30 minutos
 
 if __name__ == "__main__":
     run_bot()
