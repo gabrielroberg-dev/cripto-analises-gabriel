@@ -143,7 +143,7 @@ def run_bot():
                         print(message)
                         print("="*40)
                         last_signals[key] = result["sinal"]
-        time.sleep(1800)  # Atualiza a cada 30 minutos
+        time.sleep(60)  # Atualiza a cada 60 segundos para teste rápido
 
 if __name__ == "__main__":
     run_bot()
