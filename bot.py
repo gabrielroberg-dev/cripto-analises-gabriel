@@ -19,23 +19,34 @@ def get_price():
 
 
 def get_funding():
-    url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
-    r = requests.get(url)
-    data = r.json()
-    return float(data[0]["fundingRate"])
+    try:
+        url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
+        r = requests.get(url)
+        data = r.json()
+        return float(data[0].get("fundingRate", 0))
+    except Exception as e:
+        print("Erro no funding:", e)
+        return 0
 
 
 def get_open_interest(symbol="BTCUSDT"):
-    r = requests.get(f"{BASE_URL}/fapi/v1/openInterest?symbol={symbol}")
-    return float(r.json()["openInterest"])
+    try:
+        r = requests.get(f"{BASE_URL}/fapi/v1/openInterest?symbol={symbol}")
+        return float(r.json().get("openInterest", 0))
+    except:
+        return 0
 
 
 def get_liquidations(symbol="BTCUSDT"):
-    r = requests.get(f"{BASE_URL}/futures/data/liquidationOrders?symbol={symbol}&limit=50")
-    data = r.json()
-    longs = sum(float(x["price"]) for x in data if x["side"] == "BUY")
-    shorts = sum(float(x["price"]) for x in data if x["side"] == "SELL")
-    return longs, shorts
+    try:
+        r = requests.get(f"{BASE_URL}/futures/data/liquidationOrders?symbol={symbol}&limit=50")
+        data = r.json()
+        longs = sum(float(x.get("price", 0)) for x in data if x.get("side") == "BUY")
+        shorts = sum(float(x.get("price", 0)) for x in data if x.get("side") == "SELL")
+        return longs, shorts
+    except Exception as e:
+        print("Erro nas liquidações:", e)
+        return 0, 0
 
 
 def run_bot():
