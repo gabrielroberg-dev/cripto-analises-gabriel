@@ -9,6 +9,8 @@ import ta
 BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
 CHAT_ID = 1793725704
 
+DEBUG = True  # Se True, imprime logs detalhados; se False, imprime só alertas
+
 def send_telegram(message):
     """Envia mensagem para o Telegram"""
     try:
@@ -16,7 +18,8 @@ def send_telegram(message):
         payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
         requests.post(url, data=payload, timeout=5)
     except Exception as e:
-        print("Erro enviando Telegram:", e)
+        if DEBUG:
+            print("Erro enviando Telegram:", e)
 
 # ================================
 #  ATIVOS E SUPORTE/RESISTÊNCIA
@@ -28,7 +31,7 @@ suportes_resistencias = {
             "4h":{"S":[28000],"R":[30000]},
             "1d":{"S":[27000],"R":[31000]},
             "1w":{"S":[25000],"R":[35000]},
-            "1m":{"S":[24000],"R":[36000]}},  # Adicionado mensal para BTC
+            "1m":{"S":[24000],"R":[36000]}},
     "ETH": {
         "4h": {"S":[2970.75], "R":[3833.01]},
         "1d": {"S":[3038.98, 2526.17, 2526.17], "R":[3237.49, 3353.29, 4213.49]},
@@ -50,7 +53,8 @@ def get_ohlcv(symbol, days=7):
         df["close"] = df["close"].astype(float)
         return df
     except Exception as e:
-        print(f"Erro OHLCV {symbol}:", e)
+        if DEBUG:
+            print(f"Erro OHLCV {symbol}:", e)
         return pd.DataFrame()
 
 # ================================
@@ -102,20 +106,17 @@ def analyze(symbol, timeframe="1h"):
     }
 
 # ================================
-#  LOOP PRINCIPAL VIP (DEBUG)
+#  LOOP PRINCIPAL VIP
 # ================================
 def run_bot():
     print("🚀 Ultimate VIP Bot iniciado!")
-
     last_signals = {}
 
     while True:
         for ativo in ativos:
-            for tf in ["1h","4h","1d","1w","1m"]:  # Incluído 1m
-                print(f"Verificando sinais para {ativo} no timeframe {tf}...")
+            for tf in ["1h","4h","1d","1w","1m"]:
                 result = analyze(ativo, timeframe=tf)
-                if result:
-                    print(f"Preço atual {ativo}: {result['price']} | Tendência: {result['trend']} | RSI: {round(result['RSI'],2)}")
+                
                 if result and result["sinal"] and result["alerta"]:
                     key = f"{ativo}_{tf}"
                     if last_signals.get(key) != result["sinal"]:
@@ -130,10 +131,13 @@ def run_bot():
                             f"RSI: {round(result['RSI'],2)} | MA50: {round(result['MA50'],2)} | MA200: {round(result['MA200'],2)}"
                         )
                         send_telegram(message)
-                        print("Mensagem enviada para Telegram!")
-                        print("="*40)
+                        if DEBUG:
+                            print(f"[ALERTA] {ativo} {tf}: {result['sinal']} enviado ao Telegram!")
                         last_signals[key] = result["sinal"]
-        print("Aguardando 5 minutos para próxima verificação...\n")
+                elif DEBUG:
+                    print(f"[INFO] {ativo} {tf}: sem sinal crítico.")
+        if DEBUG:
+            print("Aguardando 5 minutos para próxima verificação...\n")
         time.sleep(300)  # Atualiza a cada 5 minutos
 
 if __name__ == "__main__":
