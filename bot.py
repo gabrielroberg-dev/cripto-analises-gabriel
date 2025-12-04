@@ -115,7 +115,7 @@ def analyze(symbol, timeframe="1h"):
     }
 
 # ================================
-#  LOOP PRINCIPAL VIP
+#  LOOP PRINCIPAL VIP (DEBUG)
 # ================================
 def run_bot():
     print("🚀 Ultimate VIP Bot iniciado!")
@@ -125,7 +125,10 @@ def run_bot():
     while True:
         for ativo in ativos:
             for tf in ["1h","4h","1d","1w"]:
+                print(f"Verificando sinais para {ativo} no timeframe {tf}...")
                 result = analyze(ativo, timeframe=tf)
+                if result:
+                    print(f"Preço atual {ativo}: {result['price']} | Tendência: {result['trend']} | RSI: {round(result['RSI'],2)}")
                 if result and result["sinal"] and result["alerta"]:
                     key = f"{ativo}_{tf}"
                     if last_signals.get(key) != result["sinal"]:
@@ -140,10 +143,11 @@ def run_bot():
                             f"RSI: {round(result['RSI'],2)} | MA50: {round(result['MA50'],2)} | MA200: {round(result['MA200'],2)}"
                         )
                         send_telegram(message)
-                        print(message)
+                        print("Mensagem enviada para Telegram!")
                         print("="*40)
                         last_signals[key] = result["sinal"]
-        time.sleep(60)  # Atualiza a cada 60 segundos para teste rápido
+        print("Aguardando 60 segundos para próxima verificação...\n")
+        time.sleep(60)  # Atualiza a cada 60 segundos
 
 if __name__ == "__main__":
     run_bot()
