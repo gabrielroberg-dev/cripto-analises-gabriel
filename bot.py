@@ -18,9 +18,11 @@ def get_price():
     return float(data.get("price", 0))
 
 
-def get_funding(symbol="BTCUSDT"):
-    r = requests.get(f"{BASE_URL}/fapi/v1/fundingRate?symbol={symbol}")
-    return float(r.json()[-1]["fundingRate"])
+def get_funding():
+    url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
+    r = requests.get(url)
+    data = r.json()
+    return float(data[0]["fundingRate"])
 
 
 def get_open_interest(symbol="BTCUSDT"):
