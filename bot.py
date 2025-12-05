@@ -2,6 +2,7 @@ import requests
 import time
 import pandas as pd
 import ta
+import threading
 
 # ================================
 #  CONFIGURAÇÃO TELEGRAM
@@ -9,7 +10,7 @@ import ta
 BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
 CHAT_ID = 1793725704
 
-DEBUG = True  # Se True, imprime logs detalhados; se False, imprime só alertas
+DEBUG = True  # True para logs detalhados
 
 def send_telegram(message):
     """Envia mensagem para o Telegram"""
@@ -83,7 +84,15 @@ def analyze(symbol, timeframe="1h"):
     suporte = min([s for s in nivel["S"] if s <= price] + [nivel["S"][0]])
     resistencia = min([r for r in nivel["R"] if r >= price] + [nivel["R"][0]])
 
-    # Detecta rompimento de nível
+    # Mini gráfico ASCII
+    grafico = ""
+    for s in nivel["S"]:
+        grafico += f"S{s} "
+    for r in nivel["R"]:
+        grafico += f"R{r} "
+    grafico += f"P{price}"
+
+    # Detecta rompimento e atualiza níveis
     sinal = None
     alerta = None
     if trend == "ALTA" and price <= suporte and rsi < 35:
@@ -92,6 +101,16 @@ def analyze(symbol, timeframe="1h"):
     elif trend == "BAIXA" and price >= resistencia and rsi > 65:
         sinal = "VENDA ⚡ OPORTUNIDADE CRÍTICA"
         alerta = True
+
+    # Rompimento -> inverter níveis
+    if price > resistencia:
+        nivel["S"].append(resistencia)
+        nivel["R"].remove(resistencia)
+        if DEBUG: print(f"[INFO] {symbol} {timeframe}: Resistência {resistencia} rompida, virou suporte!")
+    if price < suporte:
+        nivel["R"].append(suporte)
+        nivel["S"].remove(suporte)
+        if DEBUG: print(f"[INFO] {symbol} {timeframe}: Suporte {suporte} rompido, virou resistência!")
 
     return {
         "price": price,
@@ -102,45 +121,58 @@ def analyze(symbol, timeframe="1h"):
         "resistencia": resistencia,
         "trend": trend,
         "sinal": sinal,
-        "alerta": alerta
+        "alerta": alerta,
+        "grafico": grafico
     }
 
 # ================================
-#  LOOP PRINCIPAL VIP COM HEARTBEAT
+#  FUNÇÃO DE THREAD PARA CADA ATIVO/TIMEFRAME
+# ================================
+def run_ativo(ativo, timeframe, last_signals):
+    while True:
+        result = analyze(ativo, timeframe)
+        if result and result["sinal"] and result["alerta"]:
+            key = f"{ativo}_{timeframe}"
+            if last_signals.get(key) != result["sinal"]:
+                message = (
+                    f"📊 *Sinal Ultimate VIP - {ativo}/USDT*\n"
+                    f"⏱ Timeframe: {timeframe}\n"
+                    f"💰 Preço: {result['price']}\n"
+                    f"📌 Suporte próximo: {result['suporte']}\n"
+                    f"📌 Resistência próxima: {result['resistencia']}\n"
+                    f"📈 Tendência: {result['trend']}\n"
+                    f"📣 {result['sinal']}\n"
+                    f"RSI: {round(result['RSI'],2)} | MA50: {round(result['MA50'],2)} | MA200: {round(result['MA200'],2)}\n"
+                    f"🖥 Mini gráfico: {result['grafico']}"
+                )
+                send_telegram(message)
+                if DEBUG:
+                    print(f"[ALERTA] {ativo} {timeframe}: {result['sinal']} enviado ao Telegram!")
+                last_signals[key] = result["sinal"]
+        elif DEBUG:
+            print(f"[INFO] {ativo} {timeframe}: sem sinal crítico.")
+        time.sleep(300)  # Atualiza a cada 5 minutos
+
+# ================================
+#  LOOP PRINCIPAL VIP
 # ================================
 def run_bot():
     print("🚀 Ultimate VIP Bot iniciado!")
     last_signals = {}
 
-    while True:
-        for ativo in ativos:
-            for tf in ["1h","4h","1d","1w","1m"]:
-                result = analyze(ativo, timeframe=tf)
-                
-                if result and result["sinal"] and result["alerta"]:
-                    key = f"{ativo}_{tf}"
-                    if last_signals.get(key) != result["sinal"]:
-                        message = (
-                            f"📊 *Sinal Ultimate VIP - {ativo}/USDT*\n"
-                            f"⏱ Timeframe: {tf}\n"
-                            f"💰 Preço: {result['price']}\n"
-                            f"📌 Suporte próximo: {result['suporte']}\n"
-                            f"📌 Resistência próxima: {result['resistencia']}\n"
-                            f"📈 Tendência: {result['trend']}\n"
-                            f"📣 {result['sinal']}\n"
-                            f"RSI: {round(result['RSI'],2)} | MA50: {round(result['MA50'],2)} | MA200: {round(result['MA200'],2)}"
-                        )
-                        send_telegram(message)
-                        if DEBUG:
-                            print(f"[ALERTA] {ativo} {tf}: {result['sinal']} enviado ao Telegram!")
-                        last_signals[key] = result["sinal"]
-                elif DEBUG:
-                    print(f"[INFO] {ativo} {tf}: sem sinal crítico.")
+    threads = []
+    for ativo in ativos:
+        for tf in ["1h","4h","1d","1w","1m"]:
+            t = threading.Thread(target=run_ativo, args=(ativo, tf, last_signals))
+            t.daemon = True
+            t.start()
+            threads.append(t)
 
-        # Heartbeat para não travar no Render
+    # Heartbeat principal
+    while True:
         if DEBUG:
-            print(f"[{time.strftime('%H:%M:%S')}] Bot rodando... aguardando próximo loop")
-        time.sleep(300)  # Atualiza a cada 5 minutos
+            print(f"[{time.strftime('%H:%M:%S')}] Bot rodando com threads ativas...")
+        time.sleep(300)
 
 if __name__ == "__main__":
     run_bot()
