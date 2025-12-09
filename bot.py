@@ -1,163 +1,128 @@
-import requests
 import time
+import requests
+import hmac
+import hashlib
 import threading
 
-# ============================================
-#  CONFIG TELEGRAM
-# ============================================
-BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
-CHAT_ID = 1793725704
-DEBUG = True
+API_KEY = "SUA_API_KEY_AQUI"
+API_SECRET = "SUA_SECRET_AQUI"
+BASE_URL = "https://api.mexc.com"
 
+# ========================
+# UTILIDADES MEXC
+# ========================
+def assinatura(params: dict):
+    query = "&".join([f"{k}={v}" for k, v in params.items()])
+    return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, data=payload, timeout=5)
-    except Exception as e:
-        if DEBUG:
-            print("Erro Telegram:", e)
+def get_preco(symbol):
+    r = requests.get(BASE_URL + "/api/v3/ticker/price", params={"symbol": symbol})
+    return float(r.json()["price"])
 
-
-# ============================================
-#  SUPORTES E RESISTÊNCIAS ETH
-# ============================================
-SR = {
-    "ETH": {
-        "4h": {"S": [2970.75], "R": [3833.01]},
-        "1d": {"S": [3038.98, 2526.17, 2526.17], "R": [3237.49, 3353.29, 4213.49]},
-        "1w": {"S": [2902.47, 2372.62], "R": [4368.80, 35000]},
-        "1m": {"S": [2729.05, 2144.50, 0.0], "R": [4057.49, 3472.96, 4774.86]},
+def order_market(symbol, side, quantidade):
+    endpoint = "/api/v3/order"
+    params = {
+        "symbol": symbol,
+        "side": side,
+        "type": "MARKET",
+        "quantity": quantidade,
+        "timestamp": int(time.time()*1000)
     }
-}
+    params["signature"] = assinatura(params)
+    r = requests.post(BASE_URL + endpoint, headers={"X-MEXC-APIKEY": API_KEY}, params=params)
+    print("Ordem enviada:", r.json())
+    return r.json()
+
+# ========================
+# SUPORTE / RESISTÊNCIA
+# ========================
+def pegar_candles(symbol, interval="1h", limit=200):
+    r = requests.get(BASE_URL + "/api/v3/klines", params={
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    })
+    return r.json()
+
+def calcular_sr(candles):
+    highs = [float(c[2]) for c in candles]
+    lows = [float(c[3]) for c in candles]
+
+    resistencias = sorted(list(set(highs)))[-5:]
+    suportes = sorted(list(set(lows)))[:5]
+
+    return suportes, resistencias
+
+# ========================
+# LÓGICA DO BOT
+# ========================
+def analisar(symbol, tf, state):
+    candles = pegar_candles(symbol, tf)
+    preco = get_preco(symbol)
+
+    suportes, resistencias = calcular_sr(candles)
+
+    # Evitar erro caso listas fiquem vazias
+    if not suportes:
+        suportes = [preco]
+    if not resistencias:
+        resistencias = [preco]
+
+    s_prox = max([s for s in suportes if s <= preco], default=suportes[-1])
+    r_prox = min([r for r in resistencias if r >= preco], default=resistencias[0])
+
+    print(f"{symbol} | Preço: {preco} | Suporte próximo: {s_prox} | Resistência próxima: {r_prox}")
+
+    # ========================
+    # COMPRA AUTOMÁTICA
+    # ========================
+    if preco <= s_prox and state["pos"] == 0:
+        print("🟢 COMPRA EXECUTADA")
+        order_market(symbol, "BUY", state["qtd"])
+        state["pos"] = 1
+        state["entrada"] = preco
+
+    # ========================
+    # STOP GAIN
+    # ========================
+    if state["pos"] == 1 and preco >= state["entrada"] * (1 + state["gain"]):
+        print("🟩 STOP GAIN ATIVO")
+        order_market(symbol, "SELL", state["qtd"])
+        state["pos"] = 0
+
+    # ========================
+    # STOP LOSS
+    # ========================
+    if state["pos"] == 1 and preco <= state["entrada"] * (1 - state["loss"]):
+        print("🟥 STOP LOSS ATIVO")
+        order_market(symbol, "SELL", state["qtd"])
+        state["pos"] = 0
 
 
-# ============================================
-#  FUNÇÃO DE PREÇO — 100% GARANTIDA
-# ============================================
-def get_price():
-
-    # 1 — DEXSCREENER (FUNCIONA SEMPRE)
-    try:
-        r = requests.get(
-            "https://api.dexscreener.com/latest/dex/search?q=eth",
-            timeout=5
-        )
-        data = r.json()
-
-        if "pairs" in data and len(data["pairs"]) > 0:
-            best = max(data["pairs"], key=lambda x: x.get("liquidity", {}).get("usd", 0))
-            return float(best["priceUsd"])
-    except Exception as e:
-        if DEBUG:
-            print("[DexScreener] erro:", e)
-
-    # 2 — FALLBACK EM CASO EXTREMO
-    try:
-        r = requests.get(
-            "https://api.coinpaprika.com/v1/tickers/eth-ethereum",
-            timeout=5
-        )
-        data = r.json()
-        return float(data["quotes"]["USD"]["price"])
-    except Exception as e:
-        if DEBUG:
-            print("[Paprika] erro:", e)
-
-    if DEBUG:
-        print("🔥 Falha ao pegar preço!")
-    return None
-
-
-# ============================================
-#  ANALISAR SUPORTE E RESISTÊNCIA
-# ============================================
-def analisar_sr(symbol, timeframe, last_state):
-    price = get_price()
-
-    if price is None:
-        if DEBUG:
-            print("Erro ao pegar preço")
-        return
-
-    niveis = SR[symbol][timeframe]
-    suportes = sorted(niveis["S"])
-    resistencias = sorted(niveis["R"])
-
-    s_prox = max([s for s in suportes if s <= price], default=suportes[0])
-    r_prox = min([r for r in resistencias if r >= price], default=resistencias[0])
-
-    key = f"{symbol}_{timeframe}"
-
-    # ============ CONDIÇÕES ============
-
-    # BATEU SUPORTE → COMPRA
-    if abs(price - s_prox) <= 0.3:
-        sinal = f"🟢 *COMPRA* — ETH bateu o suporte {s_prox}\n💵 Preço: {price}"
-        if last_state.get(key) != f"SUPORTE_{s_prox}":
-            send_telegram(sinal)
-            last_state[key] = f"SUPORTE_{s_prox}"
-        return
-
-    # BATEU RESISTÊNCIA → VENDA
-    if abs(price - r_prox) <= 0.3:
-        sinal = f"🔴 *VENDA* — ETH bateu a resistência {r_prox}\n💵 Preço: {price}"
-        if last_state.get(key) != f"RESISTENCIA_{r_prox}":
-            send_telegram(sinal)
-            last_state[key] = f"RESISTENCIA_{r_prox}"
-        return
-
-    # ROMPEU PARA CIMA
-    if price > r_prox:
-        sinal = f"🚀 *ROMPIMENTO PRA CIMA!* — resistência {r_prox} virou SUPORTE\n💵 Preço: {price}"
-        if last_state.get(key) != f"ROMPEU_CIMA_{r_prox}":
-            send_telegram(sinal)
-            niveis["S"].append(r_prox)
-            niveis["R"].remove(r_prox)
-            last_state[key] = f"ROMPEU_CIMA_{r_prox}"
-        return
-
-    # ROMPEU PARA BAIXO
-    if price < s_prox:
-        sinal = f"⚠️ *ROMPIMENTO PRA BAIXO!* — suporte {s_prox} virou RESISTÊNCIA\n💵 Preço: {price}"
-        if last_state.get(key) != f"ROMPEU_BAIXO_{s_prox}":
-            send_telegram(sinal)
-            niveis["R"].append(s_prox)
-            niveis["S"].remove(s_prox)
-            last_state[key] = f"ROMPEU_BAIXO_{s_prox}"
-        return
-
-    if DEBUG:
-        print(f"[{symbol} {timeframe}] Preço OK | {price}")
-
-
-# ============================================
-#  THREAD ETH
-# ============================================
-def loop_eth(last_state):
-    while True:
-        for tf in ["4h", "1d", "1w", "1m"]:
-            analisar_sr("ETH", tf, last_state)
-        time.sleep(20)
-
-
-# ============================================
-#  BOT PRINCIPAL
-# ============================================
-def run_bot():
-    print("🚀 Bot Ultimate SR INICIADO!")
-    last_state = {}
-
-    t = threading.Thread(target=loop_eth, args=(last_state,))
-    t.daemon = True
-    t.start()
+# =========================
+# THREADS DO BOT
+# =========================
+def iniciar(symbol):
+    state = {
+        "pos": 0,
+        "entrada": 0,
+        "qtd": 0.003,   # AJUSTE SUA QUANTIDADE
+        "gain": 0.003,  # 0.3% STOP GAIN
+        "loss": 0.003   # 0.3% STOP LOSS
+    }
 
     while True:
-        if DEBUG:
-            print("[RUNNING] Bot ativo...")
-        time.sleep(60)
+        try:
+            analisar(symbol, "1h", state)
+        except Exception as e:
+            print("Erro:", e)
+        
+        time.sleep(10)
 
+# =========================
+# EXECUÇÃO EM PARALELO
+# =========================
+threading.Thread(target=iniciar, args=("BTCUSDT",)).start()
+threading.Thread(target=iniciar, args=("ETHUSDT",)).start()
 
-if __name__ == "__main__":
-    run_bot()
+print("BOT INICIADO 🚀")
