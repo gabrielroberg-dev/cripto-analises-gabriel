@@ -3,20 +3,21 @@ import requests
 
 print("BOT ETH INICIADO 🚀")
 
-# ===== BUSCAR PREÇO DA BITGET (SEM LIMITE, SEM API KEY) =====
 def get_eth_price():
     try:
-        url = "https://api.bitget.com/api/spot/v1/market/tickers?symbol=ETHUSDT"
-        response = requests.get(url)
-        data = response.json()
+        url = "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT"
+        r = requests.get(url)
+        data = r.json()
 
-        # Bitget retorna uma lista dentro de "data"
-        return float(data["data"][0]["close"])
+        # Kraken: price está em data["result"]["XETHZUSD"]["c"][0]
+        key = list(data["result"].keys())[0]
+        price = float(data["result"][key]["c"][0])
+        return price
+
     except Exception as e:
-        print("[ERRO] Falha ao obter preço da Bitget:", e)
+        print("[ERRO] Falha ao obter preço Kraken:", e)
         return None
 
-# ===== SUPORTE E RESISTÊNCIA FIXOS (por enquanto) =====
 SUPORTES = [3000, 2900, 2800, 2700]
 RESISTENCIAS = [3300, 3400, 3500, 3600]
 
