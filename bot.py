@@ -1,61 +1,40 @@
-import requests
 import time
-import threading
+import requests
 
-# -----------------------------------------
-# FUNÇÃO PARA PEGAR O PREÇO DO ETH (BINANCE)
-# -----------------------------------------
-def get_price_eth():
+API_KEY = "COLOQUE_SUA_API_KEY_AQUI"  # Binance API KEY se for colocar no futuro
+
+# ===== BUSCAR PREÇO DA BINANCE (SEM LIMITE) =====
+def get_eth_price():
     try:
         url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
-        r = requests.get(url, timeout=10)
-
-        data = r.json()
-
+        response = requests.get(url)
+        data = response.json()
         return float(data["price"])
-
     except Exception as e:
-        print("Erro ao obter preço:", e)
+        print("[ERRO] Falha ao obter preço:", e)
         return None
 
+# ===== SUPORTE E RESISTÊNCIA FIXOS (por enquanto) =====
+SUPORTES = [3000, 2900, 2800, 2700]
+RESISTENCIAS = [3300, 3400, 3500, 3600]
 
-# -----------------------------------------
-# ANÁLISE SIMPLES
-# -----------------------------------------
-def analisar_eth(price):
-    suportes = [2800, 3000, 3200]
-    resistencias = [3400, 3600, 3800]
+def detectar_sr(preco):
+    suporte = max([s for s in SUPORTES if s <= preco], default=SUPORTES[-1])
+    resistencia = min([r for r in RESISTENCIAS if r >= preco], default=RESISTENCIAS[0])
+    return suporte, resistencia
 
-    suporte_prox = max([s for s in suportes if s <= price], default=suportes[0])
-    resistencia_prox = min([r for r in resistencias if r >= price], default=resistencias[-1])
+print("BOT ETH INICIADO 🚀")
 
-    print(f"[ETH] Preço atual: {price}")
-    print(f" → Suporte mais próximo: {suporte_prox}")
-    print(f" → Resistência mais próxima: {resistencia_prox}")
-    print("-" * 50)
+while True:
+    preco = get_eth_price()
 
+    if preco:
+        suporte, resistencia = detectar_sr(preco)
 
-# -----------------------------------------
-# LOOP DO BOT
-# -----------------------------------------
-def loop_eth():
-    print("BOT ETH INICIADO 🚀")
+        print("\n=======================================")
+        print(f"[ETH] Preço: {preco:.2f} USDT")
+        print(f"→ Suporte mais próximo: {suporte}")
+        print(f"→ Resistência mais próxima: {resistencia}")
+        print("=======================================")
 
-    while True:
-        price = get_price_eth()
-
-        if price:
-            analisar_eth(price)
-
-        time.sleep(5)  # Pode ser 5s, Binance aguenta
-
-
-# -----------------------------------------
-# INICIAR
-# -----------------------------------------
-if __name__ == "__main__":
-    t = threading.Thread(target=loop_eth)
-    t.start()
-
-    while True:
-        time.sleep(1)
+    time.sleep(10)
