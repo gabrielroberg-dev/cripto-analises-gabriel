@@ -1,17 +1,19 @@
 import time
 import requests
 
-API_KEY = "COLOQUE_SUA_API_KEY_AQUI"  # Binance API KEY se for colocar no futuro
+print("BOT ETH INICIADO 🚀")
 
-# ===== BUSCAR PREÇO DA BINANCE (SEM LIMITE) =====
+# ===== BUSCAR PREÇO DA BITGET (SEM LIMITE, SEM API KEY) =====
 def get_eth_price():
     try:
-        url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
+        url = "https://api.bitget.com/api/spot/v1/market/tickers?symbol=ETHUSDT"
         response = requests.get(url)
         data = response.json()
-        return float(data["price"])
+
+        # Bitget retorna uma lista dentro de "data"
+        return float(data["data"][0]["close"])
     except Exception as e:
-        print("[ERRO] Falha ao obter preço:", e)
+        print("[ERRO] Falha ao obter preço da Bitget:", e)
         return None
 
 # ===== SUPORTE E RESISTÊNCIA FIXOS (por enquanto) =====
@@ -22,8 +24,6 @@ def detectar_sr(preco):
     suporte = max([s for s in SUPORTES if s <= preco], default=SUPORTES[-1])
     resistencia = min([r for r in RESISTENCIAS if r >= preco], default=RESISTENCIAS[0])
     return suporte, resistencia
-
-print("BOT ETH INICIADO 🚀")
 
 while True:
     preco = get_eth_price()
@@ -37,4 +37,4 @@ while True:
         print(f"→ Resistência mais próxima: {resistencia}")
         print("=======================================")
 
-    time.sleep(10)
+    time.sleep(5)
