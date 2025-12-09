@@ -1,128 +1,97 @@
-import time
 import requests
-import hmac
-import hashlib
-import threading
+import time
 
-API_KEY = "SUA_API_KEY_AQUI"
-API_SECRET = "SUA_SECRET_AQUI"
-BASE_URL = "https://api.mexc.com"
+BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
+CHAT_ID = 1793725704
+DEBUG = True
 
-# ========================
-# UTILIDADES MEXC
-# ========================
-def assinatura(params: dict):
-    query = "&".join([f"{k}={v}" for k, v in params.items()])
-    return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-def get_preco(symbol):
-    r = requests.get(BASE_URL + "/api/v3/ticker/price", params={"symbol": symbol})
-    return float(r.json()["price"])
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, data=payload, timeout=5)
+    except Exception as e:
+        print("Erro Telegram:", e)
 
-def order_market(symbol, side, quantidade):
-    endpoint = "/api/v3/order"
-    params = {
-        "symbol": symbol,
-        "side": side,
-        "type": "MARKET",
-        "quantity": quantidade,
-        "timestamp": int(time.time()*1000)
-    }
-    params["signature"] = assinatura(params)
-    r = requests.post(BASE_URL + endpoint, headers={"X-MEXC-APIKEY": API_KEY}, params=params)
-    print("Ordem enviada:", r.json())
-    return r.json()
 
 # ========================
-# SUPORTE / RESISTÊNCIA
+# SUPORTES / RESISTÊNCIAS
 # ========================
-def pegar_candles(symbol, interval="1h", limit=200):
-    r = requests.get(BASE_URL + "/api/v3/klines", params={
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    })
-    return r.json()
+SR = {
+    "S": [2970.75, 3038.98, 2526.17, 2902.47, 2372.62, 2729.05, 2144.50],
+    "R": [3833.01, 3237.49, 3353.29, 4213.49, 4368.80, 35000, 4057.49, 3472.96, 4774.86],
+}
 
-def calcular_sr(candles):
-    highs = [float(c[2]) for c in candles]
-    lows = [float(c[3]) for c in candles]
 
-    resistencias = sorted(list(set(highs)))[-5:]
-    suportes = sorted(list(set(lows)))[:5]
+# ========================
+# PREÇO (SEM BINANCE)
+# ========================
+def get_price():
+    url = "https://api.coinbase.com/v2/prices/ETH-USD/spot"
 
-    return suportes, resistencias
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            return float(data["data"]["amount"])
+        else:
+            print("[Coinbase] Status:", r.status_code)
+    except Exception as e:
+        print("[Coinbase] Erro:", e)
+
+    return None
+
 
 # ========================
 # LÓGICA DO BOT
 # ========================
-def analisar(symbol, tf, state):
-    candles = pegar_candles(symbol, tf)
-    preco = get_preco(symbol)
+def analisar(preco, last_state):
+    suportes = sorted(SR["S"])
+    resistencias = sorted(SR["R"])
 
-    suportes, resistencias = calcular_sr(candles)
+    s_prox = max([s for s in suportes if s <= preco], default=None)
+    r_prox = min([r for r in resistencias if r >= preco], default=None)
 
-    # Evitar erro caso listas fiquem vazias
-    if not suportes:
-        suportes = [preco]
-    if not resistencias:
-        resistencias = [preco]
+    # Sem níveis válidos
+    if s_prox is None or r_prox is None:
+        print("⚠ Sem níveis SR válidos.")
+        return
 
-    s_prox = max([s for s in suportes if s <= preco], default=suportes[-1])
-    r_prox = min([r for r in resistencias if r >= preco], default=resistencias[0])
+    print(f"[ETH] Preço: {preco} | S: {s_prox} | R: {r_prox}")
 
-    print(f"{symbol} | Preço: {preco} | Suporte próximo: {s_prox} | Resistência próxima: {r_prox}")
+    # BATEU SUPORTE
+    if abs(preco - s_prox) <= 0.3:
+        if last_state != f"S_{s_prox}":
+            send_telegram(f"🟢 *COMPRA* no suporte {s_prox}\nPreço: {preco}")
+            last_state = f"S_{s_prox}"
 
-    # ========================
-    # COMPRA AUTOMÁTICA
-    # ========================
-    if preco <= s_prox and state["pos"] == 0:
-        print("🟢 COMPRA EXECUTADA")
-        order_market(symbol, "BUY", state["qtd"])
-        state["pos"] = 1
-        state["entrada"] = preco
+    # BATEU RESISTÊNCIA
+    elif abs(preco - r_prox) <= 0.3:
+        if last_state != f"R_{r_prox}":
+            send_telegram(f"🔴 *VENDA* na resistência {r_prox}\nPreço: {preco}")
+            last_state = f"R_{r_prox}"
 
-    # ========================
-    # STOP GAIN
-    # ========================
-    if state["pos"] == 1 and preco >= state["entrada"] * (1 + state["gain"]):
-        print("🟩 STOP GAIN ATIVO")
-        order_market(symbol, "SELL", state["qtd"])
-        state["pos"] = 0
-
-    # ========================
-    # STOP LOSS
-    # ========================
-    if state["pos"] == 1 and preco <= state["entrada"] * (1 - state["loss"]):
-        print("🟥 STOP LOSS ATIVO")
-        order_market(symbol, "SELL", state["qtd"])
-        state["pos"] = 0
+    return last_state
 
 
-# =========================
-# THREADS DO BOT
-# =========================
-def iniciar(symbol):
-    state = {
-        "pos": 0,
-        "entrada": 0,
-        "qtd": 0.003,   # AJUSTE SUA QUANTIDADE
-        "gain": 0.003,  # 0.3% STOP GAIN
-        "loss": 0.003   # 0.3% STOP LOSS
-    }
+# ========================
+# LOOP PRINCIPAL — COMPATÍVEL COM RENDER
+# ========================
+def main():
+    print("BOT INICIADO 🚀")
+    last_state = None
 
     while True:
-        try:
-            analisar(symbol, "1h", state)
-        except Exception as e:
-            print("Erro:", e)
-        
-        time.sleep(10)
+        preco = get_price()
 
-# =========================
-# EXECUÇÃO EM PARALELO
-# =========================
-threading.Thread(target=iniciar, args=("BTCUSDT",)).start()
-threading.Thread(target=iniciar, args=("ETHUSDT",)).start()
+        if preco:
+            last_state = analisar(preco, last_state)
+        else:
+            print("❌ Falha ao pegar preço.")
 
-print("BOT INICIADO 🚀")
+        time.sleep(20)
+
+
+if __name__ == "__main__":
+    main()
