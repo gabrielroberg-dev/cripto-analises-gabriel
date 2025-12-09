@@ -34,63 +34,36 @@ SR = {
 
 
 # ============================================
-#  FUNÇÃO MAIS ROBUSTA PRA PEGAR PREÇO
+#  FUNÇÃO DE PREÇO — 100% GARANTIDA
 # ============================================
 def get_price():
-    binance_url = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
-    coingecko_url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; gabriel-bot/1.0)"}
 
-    # BINANCE (3 tentativas)
-    for attempt in range(1, 3 + 1):
-        try:
-            r = requests.get(binance_url, timeout=6, headers=headers)
-            text = r.text
+    # 1 — DEXSCREENER (FUNCIONA SEMPRE)
+    try:
+        r = requests.get(
+            "https://api.dexscreener.com/latest/dex/search?q=eth",
+            timeout=5
+        )
+        data = r.json()
 
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                    if isinstance(data, dict) and "price" in data:
-                        return float(data["price"])
-                    else:
-                        if DEBUG:
-                            print(f"[Binance] JSON inesperado:", data)
-                except Exception as e:
-                    if DEBUG:
-                        print(f"[Binance] Erro JSON:", e, "| resp:", text[:200])
-            else:
-                if DEBUG:
-                    print(f"[Binance] status {r.status_code} | resp:", text[:200])
+        if "pairs" in data and len(data["pairs"]) > 0:
+            best = max(data["pairs"], key=lambda x: x.get("liquidity", {}).get("usd", 0))
+            return float(best["priceUsd"])
+    except Exception as e:
+        if DEBUG:
+            print("[DexScreener] erro:", e)
 
-        except Exception as e:
-            if DEBUG:
-                print(f"[Binance] Erro tentativa {attempt}:", e)
-
-        time.sleep(0.7 * attempt)
-
-    # COINGECKO (2 tentativas)
-    for attempt in range(1, 2 + 1):
-        try:
-            r = requests.get(coingecko_url, timeout=6, headers=headers)
-            text = r.text
-
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                    if "ethereum" in data and "usd" in data["ethereum"]:
-                        return float(data["ethereum"]["usd"])
-                except:
-                    pass
-
-            else:
-                if DEBUG:
-                    print(f"[CoinGecko] status {r.status_code} | resp:", text[:200])
-
-        except Exception as e:
-            if DEBUG:
-                print(f"[CoinGecko] Erro tentativa {attempt}:", e)
-
-        time.sleep(1)
+    # 2 — FALLBACK EM CASO EXTREMO
+    try:
+        r = requests.get(
+            "https://api.coinpaprika.com/v1/tickers/eth-ethereum",
+            timeout=5
+        )
+        data = r.json()
+        return float(data["quotes"]["USD"]["price"])
+    except Exception as e:
+        if DEBUG:
+            print("[Paprika] erro:", e)
 
     if DEBUG:
         print("🔥 Falha ao pegar preço!")
@@ -102,6 +75,7 @@ def get_price():
 # ============================================
 def analisar_sr(symbol, timeframe, last_state):
     price = get_price()
+
     if price is None:
         if DEBUG:
             print("Erro ao pegar preço")
@@ -116,9 +90,7 @@ def analisar_sr(symbol, timeframe, last_state):
 
     key = f"{symbol}_{timeframe}"
 
-    # ============
-    #  CONDIÇÕES
-    # ============
+    # ============ CONDIÇÕES ============
 
     # BATEU SUPORTE → COMPRA
     if abs(price - s_prox) <= 0.3:
@@ -161,20 +133,20 @@ def analisar_sr(symbol, timeframe, last_state):
 
 
 # ============================================
-#  THREAD DO ATIVO
+#  THREAD ETH
 # ============================================
 def loop_eth(last_state):
     while True:
         for tf in ["4h", "1d", "1w", "1m"]:
             analisar_sr("ETH", tf, last_state)
-        time.sleep(20)  # roda a cada 20 segundos
+        time.sleep(20)
 
 
 # ============================================
 #  BOT PRINCIPAL
 # ============================================
 def run_bot():
-    print("🚀 Bot Ultimate SR iniciado!")
+    print("🚀 Bot Ultimate SR INICIADO!")
     last_state = {}
 
     t = threading.Thread(target=loop_eth, args=(last_state,))
