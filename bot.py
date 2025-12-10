@@ -1,121 +1,185 @@
-# flags por nível
-alertas_enviados = {
-    "rompeu_suporte": set(),
-    "rompeu_resistencia": set(),
-    "toque_suporte": set(),
-    "toque_resistencia": set(),
-    "aprox_suporte": set(),
-    "aprox_resistencia": set()
-}
+import time
+import requests
+import statistics
 
+print("BOT ETH INICIADO 🚀")
+
+# =====================================================
+# CONFIG TELEGRAM
+# =====================================================
+BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
+CHAT_ID = "1793725704"
+
+def send_telegram(msg):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+        requests.post(url, data=data)
+    except:
+        pass
+
+# =====================================================
+# PEGAR PREÇO KRAKEN
+# =====================================================
+def get_eth_price():
+    try:
+        url = "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT"
+        r = requests.get(url)
+        data = r.json()
+        key = list(data["result"].keys())[0]
+        return float(data["result"][key]["c"][0])
+    except:
+        return None
+
+# =====================================================
+# RSI
+# =====================================================
+def get_rsi(period=14):
+    try:
+        url = "https://api.kraken.com/0/public/OHLC?pair=ETHUSDT&interval=5"
+        r = requests.get(url).json()
+        key = list(r["result"].keys())[0]
+        candles = r["result"][key]
+
+        closes = [float(c[4]) for c in candles]
+
+        deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+        gains = [d for d in deltas if d > 0]
+        losses = [-d for d in deltas if d < 0]
+
+        avg_gain = (sum(gains[-period:]) / period) if len(gains) >= period else 0.001
+        avg_loss = (sum(losses[-period:]) / period) if len(losses) >= period else 0.001
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return round(rsi, 2)
+    except:
+        return None
+
+# =====================================================
+# SUPORTES E RESISTÊNCIAS
+# =====================================================
+SUPORTES = [3000, 3238, 2900, 2800, 2700]
+RESISTENCIAS = [3300, 3354, 3400, 3500, 3600]
+
+dynamic_supports = set(SUPORTES)
+dynamic_resistances = set(RESISTENCIAS)
+
+def detectar_sr(preco):
+    suporte = max([s for s in dynamic_supports if s <= preco], default=min(dynamic_supports))
+    resistencia = min([r for r in dynamic_resistances if r >= preco], default=max(dynamic_resistances))
+    return suporte, resistencia
+
+ultimo_sinal = None
+
+# =====================================================
+# CLASSIFICAÇÃO RSI
+# =====================================================
+def classificar_rsi(rsi, tipo):
+    if tipo == "compra":
+        if rsi <= 30:
+            return "🟢 *Oportunidade MUITO forte (RSI sobrevendido)*"
+        elif rsi <= 40:
+            return "🟢 *Oportunidade mediana (RSI baixo)*"
+        else:
+            return "ℹ️ RSI neutro"
+
+    if tipo == "venda":
+        if rsi >= 70:
+            return "🔴 *Oportunidade MUITO forte (RSI sobrecomprado)*"
+        elif rsi >= 60:
+            return "🔴 *Oportunidade mediana (RSI alto)*"
+        else:
+            return "ℹ️ RSI neutro"
+
+# =====================================================
+# LOOP PRINCIPAL
+# =====================================================
 while True:
     preco = get_eth_price()
-    if not preco:
+    rsi = get_rsi()
+
+    if not preco or not rsi:
         time.sleep(5)
         continue
 
     suporte, resistencia = detectar_sr(preco)
 
-    # distância segura para reset
-    distancia_reset = 0.02  # 2%
+    print("\n=======================================")
+    print(f"[ETH] Preço: {preco:.2f} USDT | RSI: {rsi}")
+    print(f"→ Suporte: {suporte}")
+    print(f"→ Resistência: {resistencia}")
+    print("=======================================")
 
-    # =============================
-    # RESET GLOBAL DE ALERTAS POR NÍVEL
-    # =============================
-    for nivel in list(alertas_enviados["toque_suporte"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["toque_suporte"].remove(nivel)
+    # TOLERÂNCIA mínima para considerar TOQUE real
+    toque_tolerancia = 0.0005  # 0.05%
 
-    for nivel in list(alertas_enviados["toque_resistencia"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["toque_resistencia"].remove(nivel)
-
-    for nivel in list(alertas_enviados["rompeu_suporte"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["rompeu_suporte"].remove(nivel)
-
-    for nivel in list(alertas_enviados["rompeu_resistencia"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["rompeu_resistencia"].remove(nivel)
-
-    for nivel in list(alertas_enviados["aprox_suporte"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["aprox_suporte"].remove(nivel)
-
-    for nivel in list(alertas_enviados["aprox_resistencia"]):
-        if abs(preco - nivel) > nivel * distancia_reset:
-            alertas_enviados["aprox_resistencia"].remove(nivel)
-
-    # =============================
-    # ROMPEU RESISTÊNCIA
-    # =============================
+    # =====================================================
+    # ROMPIMENTO PARA CIMA
+    # =====================================================
     if preco > resistencia * 1.005:
-        if resistencia not in alertas_enviados["rompeu_resistencia"]:
-            send_telegram(
-                f"🚀 Rompimento da RESISTÊNCIA - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {resistencia}"
-            )
-            alertas_enviados["rompeu_resistencia"].add(resistencia)
-
-            dynamic_resistances.discard(resistencia)
+        if resistencia in dynamic_resistances:
+            dynamic_resistances.remove(resistencia)
             dynamic_supports.add(resistencia)
 
-    # =============================
-    # ROMPEU SUPORTE
-    # =============================
-    if preco < suporte * 0.995:
-        if suporte not in alertas_enviados["rompeu_suporte"]:
+        if ultimo_sinal != "rompeu_resistencia":
             send_telegram(
-                f"⚠️ Rompimento do SUPORTE - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {suporte}"
+                f"🚀 *ROMPIMENTO DE RESISTÊNCIA - ETH*\n\n"
+                f"Preço: `{preco:.2f}`\n"
+                f"Novo suporte: `{resistencia}`\n"
+                f"RSI: `{rsi}`\n"
+                f"🔥 Alta confirmada!"
             )
-            alertas_enviados["rompeu_suporte"].add(suporte)
+            ultimo_sinal = "rompeu_resistencia"
 
-            dynamic_supports.discard(suporte)
+    # =====================================================
+    # ROMPIMENTO PARA BAIXO
+    # =====================================================
+    elif preco < suporte * 0.995:
+        if suporte in dynamic_supports:
+            dynamic_supports.remove(suporte)
             dynamic_resistances.add(suporte)
 
-    # =============================
-    # TOQUE SUPORTE
-    # =============================
-    if preco <= suporte * 1.003:
-        if suporte not in alertas_enviados["toque_suporte"]:
+        if ultimo_sinal != "rompeu_suporte":
             send_telegram(
-                f"🟢 Toque no SUPORTE - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {suporte}"
+                f"⚠️ *ROMPIMENTO DE SUPORTE - ETH*\n\n"
+                f"Preço: `{preco:.2f}`\n"
+                f"Novo nível virou resistência: `{suporte}`\n"
+                f"RSI: `{rsi}`\n"
+                f"🚨 Baixa confirmada."
             )
-            alertas_enviados["toque_suporte"].add(suporte)
+            ultimo_sinal = "rompeu_suporte"
 
-    # =============================
-    # TOQUE RESISTÊNCIA
-    # =============================
-    if preco >= resistencia * 0.997:
-        if resistencia not in alertas_enviados["toque_resistencia"]:
-            send_telegram(
-                f"🔴 Toque na RESISTÊNCIA - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {resistencia}"
-            )
-            alertas_enviados["toque_resistencia"].add(resistencia)
+    # =====================================================
+    # TOQUE NO SUPORTE (EXATO)
+    # =====================================================
+    elif abs(preco - suporte) <= suporte * toque_tolerancia and ultimo_sinal != "compra":
+        classificacao = classificar_rsi(rsi, "compra")
+        send_telegram(
+            f"🟢 *TOQUE EXATO NO SUPORTE - ETH*\n\n"
+            f"Preço: `{preco:.2f}`\n"
+            f"SUPORTE: `{suporte}`\n"
+            f"RSI: `{rsi}`\n\n"
+            f"{classificacao}"
+        )
+        ultimo_sinal = "compra"
 
-    # =============================
-    # APROX SUPORTE
-    # =============================
-    if abs(preco - suporte) <= suporte * 0.01:
-        if suporte not in alertas_enviados["aprox_suporte"]:
-            send_telegram(
-                f"🟡 Aproximação do SUPORTE - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {suporte}"
-            )
-            alertas_enviados["aprox_suporte"].add(suporte)
+    # =====================================================
+    # TOQUE NA RESISTÊNCIA (EXATO)
+    # =====================================================
+    elif abs(preco - resistencia) <= resistencia * toque_tolerancia and ultimo_sinal != "venda":
+        classificacao = classificar_rsi(rsi, "venda")
+        send_telegram(
+            f"🔴 *TOQUE EXATO NA RESISTÊNCIA - ETH*\n\n"
+            f"Preço: `{preco:.2f}`\n"
+            f"RESISTÊNCIA: `{resistencia}`\n"
+            f"RSI: `{rsi}`\n\n"
+            f"{classificacao}"
+        )
+        ultimo_sinal = "venda"
 
-    # =============================
-    # APROX RESISTÊNCIA
-    # =============================
-    if abs(preco - resistencia) <= resistencia * 0.01:
-        if resistencia not in alertas_enviados["aprox_resistencia"]:
-            send_telegram(
-                f"🟠 Aproximação da RESISTÊNCIA - ETH\n"
-                f"Preço: {preco:.2f}\nNível: {resistencia}"
-            )
-            alertas_enviados["aprox_resistencia"].add(resistencia)
+    # RESET de sinal apenas quando voltar ao meio
+    if suporte < preco < resistencia:
+        ultimo_sinal = None
 
-    time.sleep(4)
+    time.sleep(5)
