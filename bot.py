@@ -92,7 +92,7 @@ def rsi_from_list(values, period=14):
 
 
 SUPORTES = [3000, 3238, 2900, 2800, 2700]
-RESISTENCIAS = [3300, , 3354, 3400, 3500, 3600]
+RESISTENCIAS = [3300, 3354, 3400, 3500, 3600]
 
 dynamic_supports = set(SUPORTES)
 dynamic_resistances = set(RESISTENCIAS)
