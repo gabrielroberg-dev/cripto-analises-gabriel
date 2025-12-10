@@ -34,7 +34,7 @@ def get_eth_price():
 # SUPORTES E RESISTÊNCIAS (BASE)
 # =====================================================
 SUPORTES = [3000, 3238, 2900, 2800, 2700]
-RESISTENCIAS = [3300, 3400, 3500, 3600]
+RESISTENCIAS = [3300, 3354, 3400, 3500, 3600]
 
 # Listas dinamicamente ajustadas após rompimentos
 dynamic_supports = set(SUPORTES)
