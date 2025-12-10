@@ -1,145 +1,76 @@
-import time
-import requests
-
-print("BOT ETH INICIADO 🚀")
-
-# =====================================================
-# CONFIG TELEGRAM
-# =====================================================
-BOT_TOKEN = "8348692375:AAEI_Fcuq5zBd6Il5YPZSj2XtbsXIPLMwyM"
-CHAT_ID = "1793725704"
-
-def send_telegram(msg):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-        requests.post(url, data=data)
-    except Exception as e:
-        print("[ERRO TELEGRAM]:", e)
-
-
-# =====================================================
-# PEGAR PREÇO KRAKEN
-# =====================================================
-def get_eth_price():
-    try:
-        url = "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT"
-        r = requests.get(url, timeout=5)
-        data = r.json()
-
-        key = list(data["result"].keys())[0]
-        price = float(data["result"][key]["c"][0])
-
-        return price
-
-    except Exception as e:
-        print("[ERRO] Falha ao obter preço Kraken:", e)
-        return None
-
-
-# =====================================================
-# SUPORTES E RESISTÊNCIAS
-# =====================================================
-SUPORTES = [2800, 2900, 3000, 3238]
+# ================================
+# CONFIGURAÇÕES
+# ================================
+SUPORTES = [3000, 3050, 3100, 3150, 3200]
 RESISTENCIAS = [3300, 3354, 3400, 3500, 3600]
 
-def detectar_sr(preco):
-    suporte = max([s for s in SUPORTES if s <= preco], default=min(SUPORTES))
-    resistencia = min([r for r in RESISTENCIAS if r >= preco], default=max(RESISTENCIAS))
-    return suporte, resistencia
+ALERTA_APROXIMACAO = 0.003  # 0.3% de distância
+ALERTA_ROMPIMENTO = True     # Ativa alertas de rompimento
 
+rsi_positivo = 35    # RSI abaixo disso = bom para compras
+rsi_negativo = 70    # RSI acima disso = bom para vendas
 
-# =====================================================
-# EVITAR SPAM
-# =====================================================
-ultimo_sinal = None
+# ================================
+# LÓGICA DOS SINAIS
+# ================================
 
+def analisar_preco(preco_atual, rsi_atual):
+    mensagens = []
 
-# =====================================================
-# LOOP PRINCIPAL
-# =====================================================
-while True:
-    preco = get_eth_price()
+    # ====== Verifica Suportes ======
+    for suporte in SUPORTES:
 
-    if preco is None:
-        print("Preço não recebido. Tentando novamente...")
-        time.sleep(5)
-        continue
+        # Aproximação
+        if abs(preco_atual - suporte) / suporte <= ALERTA_APROXIMACAO:
+            mensagens.append(
+                f"🔍 *Aproximação de suporte*: ${preco_atual:.2f} está próximo do suporte ${suporte}. "
+                f"(RSI: {rsi_atual})"
+            )
 
-    suporte, resistencia = detectar_sr(preco)
+        # Teste + Possível Oportunidade
+        if preco_atual <= suporte * 1.003 and preco_atual >= suporte * 0.997:
+            tipo = "Possível OPORTUNIDADE de COMPRA"  # Mensagem segura
+            qualidade = (
+                "🟢 *Confluência forte (RSI baixo)*" if rsi_atual <= rsi_positivo 
+                else "🟡 *Confluência mediana (RSI neutro)*"
+            )
+            mensagens.append(
+                f"📉 {tipo} no suporte ${suporte}.\nPreço: ${preco_atual:.2f}\nRSI: {rsi_atual} — {qualidade}"
+            )
 
-    print("\n=======================================")
-    print(f"[ETH] Preço: {preco:.2f} USDT")
-    print(f"→ Suporte mais próximo: {suporte}")
-    print(f"→ Resistência mais próxima: {resistencia}")
-    print("=======================================")
+        # Rompimento de suporte
+        if ALERTA_ROMPIMENTO and preco_atual < suporte * 0.995:
+            mensagens.append(
+                f"🚨 *Rompimento de SUPORTE*: preço caiu abaixo de ${suporte}!\n"
+                f"Preço atual: ${preco_atual:.2f} | RSI: {rsi_atual}"
+            )
 
-    # -------------------------------------------------------------
-    # CONVERSÃO DINÂMICA:
-    # Se o preço está ACIMA de uma resistência, ela vira SUPORTE
-    # Se o preço está ABAIXO de um suporte, ele vira RESISTÊNCIA
-    # -------------------------------------------------------------
-    if preco > resistencia:
-        suporte = resistencia
-        print("A resistência virou SUPORTE dinâmico!")
-    elif preco < suporte:
-        resistencia = suporte
-        print("O suporte virou RESISTÊNCIA dinâmica!")
+    # ====== Verifica Resistências ======
+    for resistencia in RESISTENCIAS:
 
-    # -------------------------------------------------------------
-    # 🎯 TOCOU SUPORTE → COMPRA
-    # -------------------------------------------------------------
-    if preco <= suporte * 1.003 and ultimo_sinal != "compra":
-        msg = (
-            f"🟢 *SINAL DE COMPRA - ETH*\n\n"
-            f"Preço atual: `{preco:.2f}` USDT\n"
-            f"Suporte tocado: `{suporte}`\n"
-            f"🛒 Possível ponto de reversão!"
-        )
-        send_telegram(msg)
-        ultimo_sinal = "compra"
+        # Aproximação
+        if abs(preco_atual - resistencia) / resistencia <= ALERTA_APROXIMACAO:
+            mensagens.append(
+                f"🔍 *Aproximação de resistência*: ${preco_atual:.2f} está próximo da resistência ${resistencia}. "
+                f"(RSI: {rsi_atual})"
+            )
 
-    # -------------------------------------------------------------
-    # 🔴 TOCOU RESISTÊNCIA → VENDA
-    # -------------------------------------------------------------
-    elif preco >= resistencia * 0.997 and ultimo_sinal != "venda":
-        msg = (
-            f"🔴 *SINAL DE VENDA - ETH*\n\n"
-            f"Preço atual: `{preco:.2f}` USDT\n"
-            f"Resistência tocada: `{resistencia}`\n"
-            f"📉 Possível topo!"
-        )
-        send_telegram(msg)
-        ultimo_sinal = "venda"
+        # Teste + Possível Oportunidade
+        if preco_atual >= resistencia * 0.997 and preco_atual <= resistencia * 1.003:
+            tipo = "Possível OPORTUNIDADE de VENDA"
+            qualidade = (
+                "🔴 *Confluência forte (RSI alto)*" if rsi_atual >= rsi_negativo 
+                else "🟡 *Confluência mediana (RSI neutro)*"
+            )
+            mensagens.append(
+                f"📈 {tipo} na resistência ${resistencia}.\nPreço: ${preco_atual:.2f}\nRSI: {rsi_atual} — {qualidade}"
+            )
 
-    # -------------------------------------------------------------
-    # ⚠️ ROMPIMENTO DE SUPORTE
-    # -------------------------------------------------------------
-    elif preco < suporte * 0.995 and ultimo_sinal != "rompeu_suporte":
-        msg = (
-            f"⚠️ *ROMPIMENTO DE SUPORTE - ETH*\n\n"
-            f"Preço atual: `{preco:.2f}` USDT\n"
-            f"Suporte rompido: `{suporte}`\n"
-            f"🚨 Pressão vendedora forte!"
-        )
-        send_telegram(msg)
-        ultimo_sinal = "rompeu_suporte"
+        # Rompimento de resistência
+        if ALERTA_ROMPIMENTO and preco_atual > resistencia * 1.005:
+            mensagens.append(
+                f"🚨 *Rompimento de RESISTÊNCIA*: preço passou acima de ${resistencia}!\n"
+                f"Preço atual: ${preco_atual:.2f} | RSI: {rsi_atual}"
+            )
 
-    # -------------------------------------------------------------
-    # 🚀 ROMPIMENTO DE RESISTÊNCIA
-    # -------------------------------------------------------------
-    elif preco > resistencia * 1.005 and ultimo_sinal != "rompeu_resistencia":
-        msg = (
-            f"🚀 *ROMPIMENTO DE RESISTÊNCIA - ETH*\n\n"
-            f"Preço atual: `{preco:.2f}` USDT\n"
-            f"Resistência rompida: `{resistencia}`\n"
-            f"🔥 Possível continuação da alta!"
-        )
-        send_telegram(msg)
-        ultimo_sinal = "rompeu_resistencia"
-
-    # Reset de sinal
-    if suporte < preco < resistencia:
-        ultimo_sinal = None
-
-    time.sleep(5)
+    return mensagens
