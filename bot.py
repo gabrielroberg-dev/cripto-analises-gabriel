@@ -13,7 +13,11 @@ CHAT_ID = "SEU_CHAT_ID"
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+        requests.post(
+            url,
+            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
+        )
     except Exception as e:
         print("Erro Telegram:", e, flush=True)
 
@@ -22,8 +26,10 @@ def send_telegram(msg):
 # =====================================================
 def get_eth_price():
     try:
-        url = "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT"
-        r = requests.get(url, timeout=10).json()
+        r = requests.get(
+            "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT",
+            timeout=10
+        ).json()
         key = list(r["result"].keys())[0]
         return float(r["result"][key]["c"][0])
     except Exception as e:
@@ -35,8 +41,10 @@ def get_eth_price():
 # =====================================================
 def get_rsi(period=14):
     try:
-        url = "https://api.kraken.com/0/public/OHLC?pair=ETHUSDT&interval=5"
-        r = requests.get(url, timeout=10).json()
+        r = requests.get(
+            "https://api.kraken.com/0/public/OHLC?pair=ETHUSDT&interval=5",
+            timeout=10
+        ).json()
         key = list(r["result"].keys())[0]
         closes = [float(c[4]) for c in r["result"][key]]
 
@@ -93,8 +101,24 @@ def key(n, tf):
 
 def ensure_status(n, tf):
     if key(n, tf) not in status:
-        status[key(n, tf)] = {"toque": False, "rompido": False}
+        status[key(n, tf)] = {"toque": False}
     return key(n, tf)
+
+# =====================================================
+# RELATÓRIO
+# =====================================================
+def enviar_relatorio():
+    wins = sum(1 for s in historico if s["resultado"] == "WIN")
+    loss = sum(1 for s in historico if s["resultado"] == "LOSS")
+    total = wins + loss
+    taxa = (wins / total) * 100 if total > 0 else 0
+
+    send_telegram(
+        f"📊 *RANKING ATUAL DO BOT*\n\n"
+        f"✅ Wins: `{wins}`\n"
+        f"❌ Loss: `{loss}`\n"
+        f"🎯 Taxa de Acerto: `{taxa:.2f}%`"
+    )
 
 # =====================================================
 # LOOP PRINCIPAL
@@ -112,6 +136,8 @@ while True:
         for s in historico:
             if s["resultado"] != "PENDENTE":
                 continue
+
+            # expira após 12h
             if datetime.now() - s["hora"] > timedelta(hours=12):
                 s["resultado"] = "NEUTRO"
                 continue
@@ -127,11 +153,21 @@ while True:
                 elif preco >= s["entrada"] * 1.008:
                     s["resultado"] = "LOSS"
 
+            if s["resultado"] in ["WIN", "LOSS"]:
+                send_telegram(
+                    f"{'✅' if s['resultado']=='WIN' else '❌'} *RESULTADO DO SETUP*\n\n"
+                    f"{s['tipo'].upper()} `{s['classe']}` ({s['tf']})\n"
+                    f"Entrada: `{s['entrada']:.2f}`\n"
+                    f"Preço atual: `{preco:.2f}`\n"
+                    f"Resultado: *{s['resultado']}*"
+                )
+                enviar_relatorio()
+
         toque_tol = 0.0005
         reset_dist = 0.03
 
         # ---------------- SUPORTES ----------------
-        for s in SUPORTES[:]:
+        for s in SUPORTES:
             n, tf = s["nivel"], s["tf"]
             k = ensure_status(n, tf)
             dist = abs(preco - n) / n
@@ -158,7 +194,7 @@ while True:
                 status[k]["toque"] = True
 
         # ---------------- RESISTÊNCIAS ----------------
-        for r in RESISTENCIAS[:]:
+        for r in RESISTENCIAS:
             n, tf = r["nivel"], r["tf"]
             k = ensure_status(n, tf)
             dist = abs(preco - n) / n
