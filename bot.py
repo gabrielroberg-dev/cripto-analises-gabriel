@@ -44,8 +44,8 @@ def get_rsi(period=14):
         gains  = [d for d in deltas if d > 0]
         losses = [-d for d in deltas if d < 0]
 
-        avg_gain = (sum(gains[-period:])  / period) if len(gains)  >= period else 0.001
-        avg_loss = (sum(losses[-period:]) / period) if len(losses) >= period else 0.001
+        avg_gain = sum(gains[-period:]) / period if len(gains) >= period else 0.001
+        avg_loss = sum(losses[-period:]) / period if len(losses) >= period else 0.001
 
         rs = avg_gain / avg_loss
         return round(100 - (100 / (1 + rs)), 2)
@@ -53,7 +53,43 @@ def get_rsi(period=14):
         return None
 
 # =====================================================
-# SUPORTES / RESISTÊNCIAS COM TIMEFRAME
+# CLASSIFICAÇÃO A+ / B / C
+# =====================================================
+def classificar_entrada(tipo, tf, rsi):
+    score = 0
+
+    # Timeframe
+    if tf == "1W":
+        score += 4
+    elif tf == "1D":
+        score += 3
+    elif tf == "4H":
+        score += 2
+    elif tf == "1H":
+        score += 1
+
+    # RSI
+    if tipo == "compra":
+        if rsi <= 30:
+            score += 3
+        elif rsi <= 40:
+            score += 1
+    else:
+        if rsi >= 70:
+            score += 3
+        elif rsi >= 60:
+            score += 1
+
+    # Resultado
+    if score >= 7:
+        return "🟢 **ENTRADA A+**"
+    elif score >= 4:
+        return "🟡 **ENTRADA B**"
+    else:
+        return "⚪ **ENTRADA C**"
+
+# =====================================================
+# SUPORTES / RESISTÊNCIAS
 # =====================================================
 SUPORTES = [
     {"nivel": 3000, "tf": "1D"},
@@ -72,16 +108,16 @@ RESISTENCIAS = [
 ]
 
 # =====================================================
-# ESTADO DOS NÍVEIS (ANTI-SPAM)
+# ESTADO (ANTI-SPAM)
 # =====================================================
-status_niveis = {}
+status = {}
 
-def key(nivel, tf):
-    return f"{nivel}_{tf}"
+def key(n, tf):
+    return f"{n}_{tf}"
 
-for item in SUPORTES + RESISTENCIAS:
-    status_niveis[key(item["nivel"], item["tf"])] = {
-        "aproximacao": False,
+for i in SUPORTES + RESISTENCIAS:
+    status[key(i["nivel"], i["tf"])] = {
+        "aprox": False,
         "toque": False,
         "rompido": False
     }
@@ -97,87 +133,65 @@ while True:
         time.sleep(5)
         continue
 
-    print(f"\nPreço: {preco:.2f} | RSI: {rsi}")
-
-    toque_tolerancia = 0.0005
+    toque_tol = 0.0005
     aprox_min = 0.002
     aprox_max = 0.007
     reset_dist = 0.03
 
-    # -------------------------------------------------
-    # SUPORTES
-    # -------------------------------------------------
+    # ================= SUPORTES =================
     for s in SUPORTES[:]:
-
-        nivel = s["nivel"]
-        tf = s["tf"]
-        k = key(nivel, tf)
-        dist = abs(preco - nivel) / nivel
+        n, tf = s["nivel"], s["tf"]
+        k = key(n, tf)
+        dist = abs(preco - n) / n
 
         if dist > reset_dist:
-            status_niveis[k]["aproximacao"] = False
-            status_niveis[k]["toque"] = False
+            status[k]["aprox"] = status[k]["toque"] = False
 
-        if aprox_min <= dist <= aprox_max and not status_niveis[k]["aproximacao"]:
+        if dist <= toque_tol and not status[k]["toque"]:
+            nota = classificar_entrada("compra", tf, rsi)
             send_telegram(
-                f"🟡 *Aproximando do SUPORTE ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nSuporte: `{nivel}`\nRSI: `{rsi}`"
+                f"{nota}\n\n"
+                f"🟢 *TOQUE NO SUPORTE ({tf})*\n"
+                f"📍 `{n}` | 💰 `{preco:.2f}`\n"
+                f"📉 RSI: `{rsi}`"
             )
-            status_niveis[k]["aproximacao"] = True
+            status[k]["toque"] = True
 
-        if dist <= toque_tolerancia and not status_niveis[k]["toque"]:
+        if preco < n * 0.999 and not status[k]["rompido"]:
             send_telegram(
-                f"🟢 *TOQUE EXATO NO SUPORTE ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nSuporte: `{nivel}`\nRSI: `{rsi}`"
-            )
-            status_niveis[k]["toque"] = True
-
-        if preco < nivel * 0.999 and not status_niveis[k]["rompido"]:
-            send_telegram(
-                f"❌ *SUPORTE ROMPIDO ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nNível: `{nivel}`\nRSI: `{rsi}`\n\n"
-                f"➡️ Agora virou *RESISTÊNCIA*"
+                f"❌ *SUPORTE ROMPIDO ({tf})*\n"
+                f"Nível `{n}` virou *RESISTÊNCIA*"
             )
             SUPORTES.remove(s)
             RESISTENCIAS.append(s)
-            status_niveis[k]["rompido"] = True
+            status[k]["rompido"] = True
 
-    # -------------------------------------------------
-    # RESISTÊNCIAS
-    # -------------------------------------------------
+    # ================= RESISTÊNCIAS =================
     for r in RESISTENCIAS[:]:
-
-        nivel = r["nivel"]
-        tf = r["tf"]
-        k = key(nivel, tf)
-        dist = abs(preco - nivel) / nivel
+        n, tf = r["nivel"], r["tf"]
+        k = key(n, tf)
+        dist = abs(preco - n) / n
 
         if dist > reset_dist:
-            status_niveis[k]["aproximacao"] = False
-            status_niveis[k]["toque"] = False
+            status[k]["aprox"] = status[k]["toque"] = False
 
-        if aprox_min <= dist <= aprox_max and not status_niveis[k]["aproximacao"]:
+        if dist <= toque_tol and not status[k]["toque"]:
+            nota = classificar_entrada("venda", tf, rsi)
             send_telegram(
-                f"🟠 *Aproximando da RESISTÊNCIA ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nResistência: `{nivel}`\nRSI: `{rsi}`"
+                f"{nota}\n\n"
+                f"🔴 *TOQUE NA RESISTÊNCIA ({tf})*\n"
+                f"📍 `{n}` | 💰 `{preco:.2f}`\n"
+                f"📈 RSI: `{rsi}`"
             )
-            status_niveis[k]["aproximacao"] = True
+            status[k]["toque"] = True
 
-        if dist <= toque_tolerancia and not status_niveis[k]["toque"]:
+        if preco > n * 1.001 and not status[k]["rompido"]:
             send_telegram(
-                f"🔴 *TOQUE EXATO NA RESISTÊNCIA ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nResistência: `{nivel}`\nRSI: `{rsi}`"
-            )
-            status_niveis[k]["toque"] = True
-
-        if preco > nivel * 1.001 and not status_niveis[k]["rompido"]:
-            send_telegram(
-                f"✅ *RESISTÊNCIA ROMPIDA ({tf}) - ETH*\n\n"
-                f"Preço: `{preco:.2f}`\nNível: `{nivel}`\nRSI: `{rsi}`\n\n"
-                f"➡️ Agora virou *SUPORTE*"
+                f"✅ *RESISTÊNCIA ROMPIDA ({tf})*\n"
+                f"Nível `{n}` virou *SUPORTE*"
             )
             RESISTENCIAS.remove(r)
             SUPORTES.append(r)
-            status_niveis[k]["rompido"] = True
+            status[k]["rompido"] = True
 
     time.sleep(5)
