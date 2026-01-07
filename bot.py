@@ -1,6 +1,6 @@
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 print("ASSISTENTE CRIPTO (KRAKEN) INICIADO 🤖🚀", flush=True)
 
@@ -15,14 +15,18 @@ def send_telegram(msg):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(
             url,
-            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg,
+                "parse_mode": "Markdown"
+            },
             timeout=10
         )
-    except:
-        pass
+    except Exception as e:
+        print("Erro Telegram:", e, flush=True)
 
 # =====================================================
-# PREÇO ETH - KRAKEN
+# PREÇO ETH – KRAKEN
 # =====================================================
 def get_eth_price():
     try:
@@ -31,14 +35,15 @@ def get_eth_price():
             timeout=10
         ).json()
 
-        result = r.get("result", {})
-        pair = list(result.values())[0]
-        return float(pair["c"][0])
-    except:
+        pair = list(r["result"].keys())[0]
+        return float(r["result"][pair]["c"][0])
+
+    except Exception as e:
+        print("Erro preço:", e, flush=True)
         return None
 
 # =====================================================
-# RSI ETH - KRAKEN (5m)
+# RSI 5m – KRAKEN
 # =====================================================
 def get_rsi(period=14):
     try:
@@ -47,40 +52,32 @@ def get_rsi(period=14):
             timeout=10
         ).json()
 
-        result = r.get("result", {})
-        key = [k for k in result.keys() if k != "last"][0]
-        candles = result[key]
+        pair = list(r["result"].keys())[0]
+        candles = r["result"][pair]
 
-        closes = [float(c[4]) for c in candles]
+        closes = [float(c[4]) for c in candles][-100:]
 
-        if len(closes) < period + 1:
-            return None
+        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+        gains = [d for d in deltas if d > 0]
+        losses = [-d for d in deltas if d < 0]
 
-        gains, losses = [], []
-
-        for i in range(1, period + 1):
-            delta = closes[-i] - closes[-i-1]
-            if delta >= 0:
-                gains.append(delta)
-            else:
-                losses.append(abs(delta))
-
-        avg_gain = sum(gains) / period if gains else 0.001
-        avg_loss = sum(losses) / period if losses else 0.001
+        avg_gain = sum(gains[-period:]) / period if gains else 0.001
+        avg_loss = sum(losses[-period:]) / period if losses else 0.001
 
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return round(rsi, 2)
-    except:
+        return round(100 - (100 / (1 + rs)), 2)
+
+    except Exception as e:
+        print("Erro RSI:", e, flush=True)
         return None
 
 # =====================================================
-# CLASSIFICAÇÃO DE FORÇA
+# CLASSIFICAÇÃO
 # =====================================================
-def classificar(tipo, tf, rsi):
+def classificar_entrada(direcao, tf, rsi):
     score = {"1W":4,"1D":3,"4H":2,"1H":1}.get(tf,0)
 
-    if tipo == "SUPORTE":
+    if direcao == "compra":
         score += 3 if rsi <= 30 else 1 if rsi <= 40 else 0
     else:
         score += 3 if rsi >= 70 else 1 if rsi >= 60 else 0
@@ -90,83 +87,82 @@ def classificar(tipo, tf, rsi):
     return "C"
 
 # =====================================================
-# NÍVEIS TÉCNICOS
+# ZONAS TÉCNICAS (FLIP AUTOMÁTICO)
 # =====================================================
-SUPORTES = [
-    {"nivel":3000,"tf":"1D"},
-    {"nivel":3238,"tf":"4H"},
-    {"nivel":2800,"tf":"1W"},
-]
-
-RESISTENCIAS = [
-    {"nivel":3300,"tf":"4H"},
-    {"nivel":3500,"tf":"1W"},
+ZONAS = [
+    {"nivel": 2800, "tf": "1W"},
+    {"nivel": 3000, "tf": "1D"},
+    {"nivel": 3238, "tf": "4H"},
+    {"nivel": 3300, "tf": "4H"},
+    {"nivel": 3500, "tf": "1W"},
 ]
 
 # =====================================================
-# CONTROLE
+# CONTROLE DE TOQUE
 # =====================================================
 status = {}
-def key(n, tf): return f"{n}_{tf}"
-def ensure(n, tf):
-    if key(n, tf) not in status:
-        status[key(n, tf)] = datetime.min
-    return key(n, tf)
 
-TOQUE = 0.003
-COOLDOWN = timedelta(hours=6)
-HEARTBEAT = timedelta(minutes=30)
-last_heartbeat = datetime.now()
+def key(n, tf):
+    return f"{n}_{tf}"
+
+def ensure_status(n, tf):
+    if key(n, tf) not in status:
+        status[key(n, tf)] = {"toque": False}
+    return key(n, tf)
 
 # =====================================================
 # LOOP PRINCIPAL
 # =====================================================
+send_telegram("🤖 *Assistente Cripto ETH ativo*\nMonitorando zonas técnicas via *Kraken*")
+
 while True:
     try:
         preco = get_eth_price()
         rsi = get_rsi()
 
-        if preco is None or rsi is None:
-            time.sleep(15)
+        if not preco or not rsi:
+            time.sleep(10)
             continue
 
-        if datetime.now() - last_heartbeat > HEARTBEAT:
-            send_telegram("🤖 Assistente ETH ativo | Kraken | Monitorando zonas técnicas")
-            last_heartbeat = datetime.now()
+        toque_tol = 0.0005   # 0.05%
+        reset_dist = 0.03    # 3%
 
-        for s in SUPORTES:
-            n, tf = s["nivel"], s["tf"]
-            k = ensure(n, tf)
+        for z in ZONAS:
+            n, tf = z["nivel"], z["tf"]
+            k = ensure_status(n, tf)
 
-            if abs(preco - n) / n <= TOQUE:
-                if datetime.now() - status[k] > COOLDOWN:
-                    send_telegram(
-                        f"🟢 *ETH | SUPORTE ({tf})*\n\n"
-                        f"Preço: `{preco:.2f}`\n"
-                        f"RSI: `{rsi}`\n"
-                        f"Nível: `{n}`\n"
-                        f"Força: `{classificar('SUPORTE', tf, rsi)}`\n\n"
-                        f"⚠️ Não é recomendação. Faça sua análise."
-                    )
-                    status[k] = datetime.now()
+            dist = abs(preco - n) / n
 
-        for r in RESISTENCIAS:
-            n, tf = r["nivel"], r["tf"]
-            k = ensure(n, tf)
+            if dist > reset_dist:
+                status[k]["toque"] = False
 
-            if abs(preco - n) / n <= TOQUE:
-                if datetime.now() - status[k] > COOLDOWN:
-                    send_telegram(
-                        f"🔴 *ETH | RESISTÊNCIA ({tf})*\n\n"
-                        f"Preço: `{preco:.2f}`\n"
-                        f"RSI: `{rsi}`\n"
-                        f"Nível: `{n}`\n"
-                        f"Força: `{classificar('RESISTENCIA', tf, rsi)}`\n\n"
-                        f"⚠️ Não é recomendação. Faça sua análise."
-                    )
-                    status[k] = datetime.now()
+            if dist <= toque_tol and not status[k]["toque"]:
+
+                # 🔁 FLIP AUTOMÁTICO
+                if preco > n:
+                    tipo = "SUPORTE"
+                    direcao = "compra"
+                    emoji = "🟢"
+                else:
+                    tipo = "RESISTÊNCIA"
+                    direcao = "venda"
+                    emoji = "🔴"
+
+                classe = classificar_entrada(direcao, tf, rsi)
+
+                send_telegram(
+                    f"{emoji} *ETH | {tipo} ({tf})*\n\n"
+                    f"Preço atual: `{preco:.2f}`\n"
+                    f"Nível: `{n}`\n"
+                    f"RSI: `{rsi}`\n"
+                    f"Força: `{classe}`\n\n"
+                    f"_⚠️ Alerta técnico. Não é recomendação._"
+                )
+
+                status[k]["toque"] = True
 
         time.sleep(15)
 
-    except:
-        time.sleep(20)
+    except Exception as e:
+        print("Erro geral:", e, flush=True)
+        time.sleep(15)
