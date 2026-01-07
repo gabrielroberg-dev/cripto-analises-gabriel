@@ -18,36 +18,45 @@ def send_telegram(msg):
             data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
             timeout=10
         )
-    except Exception as e:
-        print("Erro Telegram:", e, flush=True)
+    except:
+        pass
 
 # =====================================================
-# PREÇO - COINGECKO
+# PREÇO - CRYPTOCOMPARE
 # =====================================================
 def get_eth_price():
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+            "https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD",
             timeout=10
         ).json()
-        return float(r["ethereum"]["usd"])
-    except Exception as e:
-        print("Erro preço:", e, flush=True)
+
+        if isinstance(r, dict) and "USD" in r:
+            return float(r["USD"])
+        return None
+    except:
         return None
 
 # =====================================================
-# RSI - COINGECKO (APROX. 5m)
+# RSI - CRYPTOCOMPARE (5m)
 # =====================================================
 def get_rsi(period=14):
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=1",
+            "https://min-api.cryptocompare.com/data/v2/histominute?fsym=ETH&tsym=USD&limit=200",
             timeout=10
         ).json()
 
-        prices = [p[1] for p in r["prices"]][-100:]
+        if "Data" not in r or "Data" not in r["Data"]:
+            return None
 
-        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        candles = r["Data"]["Data"]
+        closes = [c["close"] for c in candles if c["close"] > 0]
+
+        if len(closes) < period + 1:
+            return None
+
+        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
         gains = [d for d in deltas if d > 0]
         losses = [-d for d in deltas if d < 0]
 
@@ -56,8 +65,7 @@ def get_rsi(period=14):
 
         rs = avg_gain / avg_loss
         return round(100 - (100 / (1 + rs)), 2)
-    except Exception as e:
-        print("Erro RSI:", e, flush=True)
+    except:
         return None
 
 # =====================================================
@@ -76,7 +84,7 @@ def classificar_nivel(tipo, tf, rsi):
     return "C"
 
 # =====================================================
-# NÍVEIS TÉCNICOS
+# NÍVEIS
 # =====================================================
 SUPORTES = [
     {"nivel":3000,"tf":"1D"},
@@ -90,7 +98,7 @@ RESISTENCIAS = [
 ]
 
 # =====================================================
-# CONTROLE DE ALERTAS (ANTI-SPAM)
+# CONTROLE DE ALERTA
 # =====================================================
 status = {}
 
@@ -99,82 +107,65 @@ def key(n, tf):
 
 def ensure_status(n, tf):
     if key(n, tf) not in status:
-        status[key(n, tf)] = {"ultimo_alerta": datetime.min}
+        status[key(n, tf)] = {"ultimo": datetime.min}
     return key(n, tf)
 
-# =====================================================
-# CONFIGURAÇÕES
-# =====================================================
-TOQUE_TOL = 0.003              # 0.3%
+TOQUE_TOL = 0.003
 COOLDOWN = timedelta(hours=6)
 HEARTBEAT = timedelta(minutes=30)
 ultimo_heartbeat = datetime.now()
 
 # =====================================================
-# LOOP PRINCIPAL
+# LOOP
 # =====================================================
 while True:
     try:
         preco = get_eth_price()
         rsi = get_rsi()
 
-        if not preco or not rsi:
-            time.sleep(10)
+        if preco is None or rsi is None:
+            time.sleep(15)
             continue
 
-        # HEARTBEAT
         if datetime.now() - ultimo_heartbeat > HEARTBEAT:
             send_telegram("🤖 Assistente ETH ativo | Monitorando zonas técnicas")
             ultimo_heartbeat = datetime.now()
 
-        # ---------------- SUPORTES ----------------
         for s in SUPORTES:
             n, tf = s["nivel"], s["tf"]
             k = ensure_status(n, tf)
 
-            dist = abs(preco - n) / n
-
-            if dist <= TOQUE_TOL:
-                if datetime.now() - status[k]["ultimo_alerta"] > COOLDOWN:
+            if abs(preco - n) / n <= TOQUE_TOL:
+                if datetime.now() - status[k]["ultimo"] > COOLDOWN:
                     classe = classificar_nivel("SUPORTE", tf, rsi)
-
                     send_telegram(
-                        f"🟢 *ETH | REGIÃO DE SUPORTE ({tf})*\n\n"
-                        f"📍 Preço atual: `{preco:.2f}`\n"
-                        f"📉 RSI: `{rsi}`\n"
-                        f"🧭 Nível técnico: `{n}`\n"
-                        f"📊 Força do nível: `{classe}`\n\n"
-                        f"🧠 Região de decisão técnica.\n"
+                        f"🟢 *ETH | SUPORTE ({tf})*\n\n"
+                        f"Preço: `{preco:.2f}`\n"
+                        f"RSI: `{rsi}`\n"
+                        f"Nível: `{n}`\n"
+                        f"Força: `{classe}`\n\n"
                         f"⚠️ Faça sua própria análise."
                     )
+                    status[k]["ultimo"] = datetime.now()
 
-                    status[k]["ultimo_alerta"] = datetime.now()
-
-        # ---------------- RESISTÊNCIAS ----------------
         for r in RESISTENCIAS:
             n, tf = r["nivel"], r["tf"]
             k = ensure_status(n, tf)
 
-            dist = abs(preco - n) / n
-
-            if dist <= TOQUE_TOL:
-                if datetime.now() - status[k]["ultimo_alerta"] > COOLDOWN:
+            if abs(preco - n) / n <= TOQUE_TOL:
+                if datetime.now() - status[k]["ultimo"] > COOLDOWN:
                     classe = classificar_nivel("RESISTENCIA", tf, rsi)
-
                     send_telegram(
-                        f"🔴 *ETH | REGIÃO DE RESISTÊNCIA ({tf})*\n\n"
-                        f"📍 Preço atual: `{preco:.2f}`\n"
-                        f"📈 RSI: `{rsi}`\n"
-                        f"🧭 Nível técnico: `{n}`\n"
-                        f"📊 Força do nível: `{classe}`\n\n"
-                        f"🧠 Região de decisão técnica.\n"
+                        f"🔴 *ETH | RESISTÊNCIA ({tf})*\n\n"
+                        f"Preço: `{preco:.2f}`\n"
+                        f"RSI: `{rsi}`\n"
+                        f"Nível: `{n}`\n"
+                        f"Força: `{classe}`\n\n"
                         f"⚠️ Faça sua própria análise."
                     )
+                    status[k]["ultimo"] = datetime.now()
 
-                    status[k]["ultimo_alerta"] = datetime.now()
-
-        time.sleep(10)
-
-    except Exception as e:
-        print("Erro geral:", e, flush=True)
         time.sleep(15)
+
+    except:
+        time.sleep(20)
