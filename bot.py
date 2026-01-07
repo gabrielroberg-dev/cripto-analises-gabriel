@@ -2,7 +2,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 
-print("BOT ETH INICIADO 🚀", flush=True)
+print("ASSISTENTE CRIPTO ETH INICIADO 🤖🚀", flush=True)
 
 # =====================================================
 # CONFIG TELEGRAM
@@ -22,16 +22,15 @@ def send_telegram(msg):
         print("Erro Telegram:", e, flush=True)
 
 # =====================================================
-# PREÇO
+# PREÇO - BINANCE
 # =====================================================
 def get_eth_price():
     try:
         r = requests.get(
-            "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT",
+            "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT",
             timeout=10
         ).json()
-        key = list(r["result"].keys())[0]
-        return float(r["result"][key]["c"][0])
+        return float(r["price"])
     except Exception as e:
         print("Erro preço:", e, flush=True)
         return None
@@ -42,11 +41,10 @@ def get_eth_price():
 def get_rsi(period=14):
     try:
         r = requests.get(
-            "https://api.kraken.com/0/public/OHLC?pair=ETHUSDT&interval=5",
+            "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit=100",
             timeout=10
         ).json()
-        key = list(r["result"].keys())[0]
-        closes = [float(c[4]) for c in r["result"][key]]
+        closes = [float(c[4]) for c in r]
 
         deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
         gains = [d for d in deltas if d > 0]
@@ -62,12 +60,12 @@ def get_rsi(period=14):
         return None
 
 # =====================================================
-# CLASSIFICAÇÃO
+# CLASSIFICAÇÃO DO NÍVEL
 # =====================================================
-def classificar_entrada(tipo, tf, rsi):
+def classificar_nivel(tipo, tf, rsi):
     score = {"1W":4,"1D":3,"4H":2,"1H":1}.get(tf,0)
 
-    if tipo == "compra":
+    if tipo == "SUPORTE":
         score += 3 if rsi <= 30 else 1 if rsi <= 40 else 0
     else:
         score += 3 if rsi >= 70 else 1 if rsi >= 60 else 0
@@ -91,34 +89,27 @@ RESISTENCIAS = [
 ]
 
 # =====================================================
-# STATUS + HISTÓRICO
+# CONTROLE DE ALERTAS
 # =====================================================
 status = {}
-historico = []
 
 def key(n, tf):
     return f"{n}_{tf}"
 
 def ensure_status(n, tf):
     if key(n, tf) not in status:
-        status[key(n, tf)] = {"toque": False}
+        status[key(n, tf)] = {
+            "ultimo_alerta": datetime.min
+        }
     return key(n, tf)
 
 # =====================================================
-# RELATÓRIO
+# CONFIG ASSISTENTE
 # =====================================================
-def enviar_relatorio():
-    wins = sum(1 for s in historico if s["resultado"] == "WIN")
-    loss = sum(1 for s in historico if s["resultado"] == "LOSS")
-    total = wins + loss
-    taxa = (wins / total) * 100 if total > 0 else 0
-
-    send_telegram(
-        f"📊 *RANKING ATUAL DO BOT*\n\n"
-        f"✅ Wins: `{wins}`\n"
-        f"❌ Loss: `{loss}`\n"
-        f"🎯 Taxa de Acerto: `{taxa:.2f}%`"
-    )
+TOQUE_TOL = 0.003        # 0.3%
+COOLDOWN = timedelta(hours=6)
+HEARTBEAT = timedelta(minutes=30)
+ultimo_heartbeat = datetime.now()
 
 # =====================================================
 # LOOP PRINCIPAL
@@ -132,93 +123,56 @@ while True:
             time.sleep(5)
             continue
 
-        # -------- AVALIA SETUPS ABERTOS --------
-        for s in historico:
-            if s["resultado"] != "PENDENTE":
-                continue
+        # HEARTBEAT
+        if datetime.now() - ultimo_heartbeat > HEARTBEAT:
+            send_telegram("🤖 Assistente ETH ativo | Monitorando zonas técnicas")
+            ultimo_heartbeat = datetime.now()
 
-            # expira após 12h
-            if datetime.now() - s["hora"] > timedelta(hours=12):
-                s["resultado"] = "NEUTRO"
-                continue
-
-            if s["tipo"] == "compra":
-                if preco >= s["entrada"] * 1.012:
-                    s["resultado"] = "WIN"
-                elif preco <= s["entrada"] * 0.992:
-                    s["resultado"] = "LOSS"
-            else:
-                if preco <= s["entrada"] * 0.988:
-                    s["resultado"] = "WIN"
-                elif preco >= s["entrada"] * 1.008:
-                    s["resultado"] = "LOSS"
-
-            if s["resultado"] in ["WIN", "LOSS"]:
-                send_telegram(
-                    f"{'✅' if s['resultado']=='WIN' else '❌'} *RESULTADO DO SETUP*\n\n"
-                    f"{s['tipo'].upper()} `{s['classe']}` ({s['tf']})\n"
-                    f"Entrada: `{s['entrada']:.2f}`\n"
-                    f"Preço atual: `{preco:.2f}`\n"
-                    f"Resultado: *{s['resultado']}*"
-                )
-                enviar_relatorio()
-
-        toque_tol = 0.0005
-        reset_dist = 0.03
-
-        # ---------------- SUPORTES ----------------
+        # ================= SUPORTES =================
         for s in SUPORTES:
             n, tf = s["nivel"], s["tf"]
             k = ensure_status(n, tf)
+
             dist = abs(preco - n) / n
 
-            if dist > reset_dist:
-                status[k]["toque"] = False
+            if dist <= TOQUE_TOL:
+                if datetime.now() - status[k]["ultimo_alerta"] > COOLDOWN:
+                    classe = classificar_nivel("SUPORTE", tf, rsi)
 
-            if dist <= toque_tol and not status[k]["toque"]:
-                classe = classificar_entrada("compra", tf, rsi)
-                send_telegram(
-                    f"🟢 *SUPORTE {tf}*\n"
-                    f"Entrada `{classe}`\n"
-                    f"Preço `{preco:.2f}` | RSI `{rsi}`"
-                )
-                historico.append({
-                    "tipo":"compra",
-                    "entrada":preco,
-                    "nivel":n,
-                    "tf":tf,
-                    "classe":classe,
-                    "hora":datetime.now(),
-                    "resultado":"PENDENTE"
-                })
-                status[k]["toque"] = True
+                    send_telegram(
+                        f"🟢 *ETH | REGIÃO DE SUPORTE ({tf})*\n\n"
+                        f"📍 Preço atual: `{preco:.2f}`\n"
+                        f"📉 RSI (5m): `{rsi}`\n"
+                        f"🧭 Nível técnico: `{n}`\n"
+                        f"📊 Força do nível: `{classe}`\n\n"
+                        f"🧠 Região de decisão técnica.\n"
+                        f"⚠️ Faça sua própria análise."
+                    )
 
-        # ---------------- RESISTÊNCIAS ----------------
+                    status[k]["ultimo_alerta"] = datetime.now()
+
+        # ================= RESISTÊNCIAS =================
         for r in RESISTENCIAS:
             n, tf = r["nivel"], r["tf"]
             k = ensure_status(n, tf)
+
             dist = abs(preco - n) / n
 
-            if dist > reset_dist:
-                status[k]["toque"] = False
+            if dist <= TOQUE_TOL:
+                if datetime.now() - status[k]["ultimo_alerta"] > COOLDOWN:
+                    classe = classificar_nivel("RESISTENCIA", tf, rsi)
 
-            if dist <= toque_tol and not status[k]["toque"]:
-                classe = classificar_entrada("venda", tf, rsi)
-                send_telegram(
-                    f"🔴 *RESISTÊNCIA {tf}*\n"
-                    f"Entrada `{classe}`\n"
-                    f"Preço `{preco:.2f}` | RSI `{rsi}`"
-                )
-                historico.append({
-                    "tipo":"venda",
-                    "entrada":preco,
-                    "nivel":n,
-                    "tf":tf,
-                    "classe":classe,
-                    "hora":datetime.now(),
-                    "resultado":"PENDENTE"
-                })
-                status[k]["toque"] = True
+                    send_telegram(
+                        f"🔴 *ETH | REGIÃO DE RESISTÊNCIA ({tf})*\n\n"
+                        f"📍 Preço atual: `{preco:.2f}`\n"
+                        f"📈 RSI (5m): `{rsi}`\n"
+                        f"🧭 Nível técnico: `{n}`\n"
+                        f"📊 Força do nível: `{classe}`\n\n"
+                        f"🧠 Região de decisão técnica.\n"
+                        f"⚠️ Faça sua própria análise."
+                    )
+
+                    status[k]["ultimo_alerta"] = datetime.now()
 
         time.sleep(5)
 
