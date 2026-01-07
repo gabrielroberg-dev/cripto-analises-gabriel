@@ -22,31 +22,32 @@ def send_telegram(msg):
         print("Erro Telegram:", e, flush=True)
 
 # =====================================================
-# PREÇO - BINANCE
+# PREÇO - COINGECKO
 # =====================================================
 def get_eth_price():
     try:
         r = requests.get(
-            "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT",
+            "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
             timeout=10
         ).json()
-        return float(r["price"])
+        return float(r["ethereum"]["usd"])
     except Exception as e:
         print("Erro preço:", e, flush=True)
         return None
 
 # =====================================================
-# RSI
+# RSI - COINGECKO (APROX. 5m)
 # =====================================================
 def get_rsi(period=14):
     try:
         r = requests.get(
-            "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit=100",
+            "https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=1",
             timeout=10
         ).json()
-        closes = [float(c[4]) for c in r]
 
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+        prices = [p[1] for p in r["prices"]][-100:]
+
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
         gains = [d for d in deltas if d > 0]
         losses = [-d for d in deltas if d < 0]
 
@@ -75,7 +76,7 @@ def classificar_nivel(tipo, tf, rsi):
     return "C"
 
 # =====================================================
-# NÍVEIS
+# NÍVEIS TÉCNICOS
 # =====================================================
 SUPORTES = [
     {"nivel":3000,"tf":"1D"},
@@ -89,7 +90,7 @@ RESISTENCIAS = [
 ]
 
 # =====================================================
-# CONTROLE DE ALERTAS
+# CONTROLE DE ALERTAS (ANTI-SPAM)
 # =====================================================
 status = {}
 
@@ -98,15 +99,13 @@ def key(n, tf):
 
 def ensure_status(n, tf):
     if key(n, tf) not in status:
-        status[key(n, tf)] = {
-            "ultimo_alerta": datetime.min
-        }
+        status[key(n, tf)] = {"ultimo_alerta": datetime.min}
     return key(n, tf)
 
 # =====================================================
-# CONFIG ASSISTENTE
+# CONFIGURAÇÕES
 # =====================================================
-TOQUE_TOL = 0.003        # 0.3%
+TOQUE_TOL = 0.003              # 0.3%
 COOLDOWN = timedelta(hours=6)
 HEARTBEAT = timedelta(minutes=30)
 ultimo_heartbeat = datetime.now()
@@ -120,7 +119,7 @@ while True:
         rsi = get_rsi()
 
         if not preco or not rsi:
-            time.sleep(5)
+            time.sleep(10)
             continue
 
         # HEARTBEAT
@@ -128,7 +127,7 @@ while True:
             send_telegram("🤖 Assistente ETH ativo | Monitorando zonas técnicas")
             ultimo_heartbeat = datetime.now()
 
-        # ================= SUPORTES =================
+        # ---------------- SUPORTES ----------------
         for s in SUPORTES:
             n, tf = s["nivel"], s["tf"]
             k = ensure_status(n, tf)
@@ -142,7 +141,7 @@ while True:
                     send_telegram(
                         f"🟢 *ETH | REGIÃO DE SUPORTE ({tf})*\n\n"
                         f"📍 Preço atual: `{preco:.2f}`\n"
-                        f"📉 RSI (5m): `{rsi}`\n"
+                        f"📉 RSI: `{rsi}`\n"
                         f"🧭 Nível técnico: `{n}`\n"
                         f"📊 Força do nível: `{classe}`\n\n"
                         f"🧠 Região de decisão técnica.\n"
@@ -151,7 +150,7 @@ while True:
 
                     status[k]["ultimo_alerta"] = datetime.now()
 
-        # ================= RESISTÊNCIAS =================
+        # ---------------- RESISTÊNCIAS ----------------
         for r in RESISTENCIAS:
             n, tf = r["nivel"], r["tf"]
             k = ensure_status(n, tf)
@@ -165,7 +164,7 @@ while True:
                     send_telegram(
                         f"🔴 *ETH | REGIÃO DE RESISTÊNCIA ({tf})*\n\n"
                         f"📍 Preço atual: `{preco:.2f}`\n"
-                        f"📈 RSI (5m): `{rsi}`\n"
+                        f"📈 RSI: `{rsi}`\n"
                         f"🧭 Nível técnico: `{n}`\n"
                         f"📊 Força do nível: `{classe}`\n\n"
                         f"🧠 Região de decisão técnica.\n"
@@ -174,8 +173,8 @@ while True:
 
                     status[k]["ultimo_alerta"] = datetime.now()
 
-        time.sleep(5)
+        time.sleep(10)
 
     except Exception as e:
         print("Erro geral:", e, flush=True)
-        time.sleep(10)
+        time.sleep(15)
