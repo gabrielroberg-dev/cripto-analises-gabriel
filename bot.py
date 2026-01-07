@@ -2,7 +2,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 
-print("ASSISTENTE CRIPTO ETH INICIADO 🤖🚀", flush=True)
+print("ASSISTENTE CRIPTO (KRAKEN) INICIADO 🤖🚀", flush=True)
 
 # =====================================================
 # CONFIG TELEGRAM
@@ -22,56 +22,62 @@ def send_telegram(msg):
         pass
 
 # =====================================================
-# PREÇO - CRYPTOCOMPARE
+# PREÇO ETH - KRAKEN
 # =====================================================
 def get_eth_price():
     try:
         r = requests.get(
-            "https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD",
+            "https://api.kraken.com/0/public/Ticker?pair=ETHUSD",
             timeout=10
         ).json()
 
-        if isinstance(r, dict) and "USD" in r:
-            return float(r["USD"])
-        return None
+        result = r.get("result", {})
+        pair = list(result.values())[0]
+        return float(pair["c"][0])
     except:
         return None
 
 # =====================================================
-# RSI - CRYPTOCOMPARE (5m)
+# RSI ETH - KRAKEN (5m)
 # =====================================================
 def get_rsi(period=14):
     try:
         r = requests.get(
-            "https://min-api.cryptocompare.com/data/v2/histominute?fsym=ETH&tsym=USD&limit=200",
+            "https://api.kraken.com/0/public/OHLC?pair=ETHUSD&interval=5",
             timeout=10
         ).json()
 
-        if "Data" not in r or "Data" not in r["Data"]:
-            return None
+        result = r.get("result", {})
+        key = [k for k in result.keys() if k != "last"][0]
+        candles = result[key]
 
-        candles = r["Data"]["Data"]
-        closes = [c["close"] for c in candles if c["close"] > 0]
+        closes = [float(c[4]) for c in candles]
 
         if len(closes) < period + 1:
             return None
 
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-        gains = [d for d in deltas if d > 0]
-        losses = [-d for d in deltas if d < 0]
+        gains, losses = [], []
 
-        avg_gain = sum(gains[-period:]) / period if gains else 0.001
-        avg_loss = sum(losses[-period:]) / period if losses else 0.001
+        for i in range(1, period + 1):
+            delta = closes[-i] - closes[-i-1]
+            if delta >= 0:
+                gains.append(delta)
+            else:
+                losses.append(abs(delta))
+
+        avg_gain = sum(gains) / period if gains else 0.001
+        avg_loss = sum(losses) / period if losses else 0.001
 
         rs = avg_gain / avg_loss
-        return round(100 - (100 / (1 + rs)), 2)
+        rsi = 100 - (100 / (1 + rs))
+        return round(rsi, 2)
     except:
         return None
 
 # =====================================================
-# CLASSIFICAÇÃO DO NÍVEL
+# CLASSIFICAÇÃO DE FORÇA
 # =====================================================
-def classificar_nivel(tipo, tf, rsi):
+def classificar(tipo, tf, rsi):
     score = {"1W":4,"1D":3,"4H":2,"1H":1}.get(tf,0)
 
     if tipo == "SUPORTE":
@@ -84,7 +90,7 @@ def classificar_nivel(tipo, tf, rsi):
     return "C"
 
 # =====================================================
-# NÍVEIS
+# NÍVEIS TÉCNICOS
 # =====================================================
 SUPORTES = [
     {"nivel":3000,"tf":"1D"},
@@ -98,25 +104,22 @@ RESISTENCIAS = [
 ]
 
 # =====================================================
-# CONTROLE DE ALERTA
+# CONTROLE
 # =====================================================
 status = {}
-
-def key(n, tf):
-    return f"{n}_{tf}"
-
-def ensure_status(n, tf):
+def key(n, tf): return f"{n}_{tf}"
+def ensure(n, tf):
     if key(n, tf) not in status:
-        status[key(n, tf)] = {"ultimo": datetime.min}
+        status[key(n, tf)] = datetime.min
     return key(n, tf)
 
-TOQUE_TOL = 0.003
+TOQUE = 0.003
 COOLDOWN = timedelta(hours=6)
 HEARTBEAT = timedelta(minutes=30)
-ultimo_heartbeat = datetime.now()
+last_heartbeat = datetime.now()
 
 # =====================================================
-# LOOP
+# LOOP PRINCIPAL
 # =====================================================
 while True:
     try:
@@ -127,43 +130,41 @@ while True:
             time.sleep(15)
             continue
 
-        if datetime.now() - ultimo_heartbeat > HEARTBEAT:
-            send_telegram("🤖 Assistente ETH ativo | Monitorando zonas técnicas")
-            ultimo_heartbeat = datetime.now()
+        if datetime.now() - last_heartbeat > HEARTBEAT:
+            send_telegram("🤖 Assistente ETH ativo | Kraken | Monitorando zonas técnicas")
+            last_heartbeat = datetime.now()
 
         for s in SUPORTES:
             n, tf = s["nivel"], s["tf"]
-            k = ensure_status(n, tf)
+            k = ensure(n, tf)
 
-            if abs(preco - n) / n <= TOQUE_TOL:
-                if datetime.now() - status[k]["ultimo"] > COOLDOWN:
-                    classe = classificar_nivel("SUPORTE", tf, rsi)
+            if abs(preco - n) / n <= TOQUE:
+                if datetime.now() - status[k] > COOLDOWN:
                     send_telegram(
                         f"🟢 *ETH | SUPORTE ({tf})*\n\n"
                         f"Preço: `{preco:.2f}`\n"
                         f"RSI: `{rsi}`\n"
                         f"Nível: `{n}`\n"
-                        f"Força: `{classe}`\n\n"
-                        f"⚠️ Faça sua própria análise."
+                        f"Força: `{classificar('SUPORTE', tf, rsi)}`\n\n"
+                        f"⚠️ Não é recomendação. Faça sua análise."
                     )
-                    status[k]["ultimo"] = datetime.now()
+                    status[k] = datetime.now()
 
         for r in RESISTENCIAS:
             n, tf = r["nivel"], r["tf"]
-            k = ensure_status(n, tf)
+            k = ensure(n, tf)
 
-            if abs(preco - n) / n <= TOQUE_TOL:
-                if datetime.now() - status[k]["ultimo"] > COOLDOWN:
-                    classe = classificar_nivel("RESISTENCIA", tf, rsi)
+            if abs(preco - n) / n <= TOQUE:
+                if datetime.now() - status[k] > COOLDOWN:
                     send_telegram(
                         f"🔴 *ETH | RESISTÊNCIA ({tf})*\n\n"
                         f"Preço: `{preco:.2f}`\n"
                         f"RSI: `{rsi}`\n"
                         f"Nível: `{n}`\n"
-                        f"Força: `{classe}`\n\n"
-                        f"⚠️ Faça sua própria análise."
+                        f"Força: `{classificar('RESISTENCIA', tf, rsi)}`\n\n"
+                        f"⚠️ Não é recomendação. Faça sua análise."
                     )
-                    status[k]["ultimo"] = datetime.now()
+                    status[k] = datetime.now()
 
         time.sleep(15)
 
