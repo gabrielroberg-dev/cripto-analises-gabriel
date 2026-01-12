@@ -1,9 +1,8 @@
 import time
 import requests
-import feedparser
 from datetime import datetime
 
-print("ASSISTENTE CRIPTO ETH (KRAKEN + NEWS) INICIADO 🤖🚀", flush=True)
+print("ASSISTENTE CRIPTO ETH (KRAKEN) INICIADO 🤖🚀", flush=True)
 
 # ================== CONFIG TELEGRAM ==================
 BOT_TOKEN = "SEU_TOKEN"
@@ -12,21 +11,27 @@ CHAT_ID = "SEU_CHAT_ID"
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(
+        r = requests.post(
             url,
-            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg,
+                "parse_mode": "Markdown"
+            },
             timeout=10
         )
+        print("Telegram status:", r.status_code, flush=True)
     except Exception as e:
         print("Erro Telegram:", e, flush=True)
 
-# ================== PREÇO ETH (KRAKEN) ==================
+# ================== PREÇO ETH ==================
 def get_eth_price():
     try:
         r = requests.get(
             "https://api.kraken.com/0/public/Ticker?pair=ETHUSDT",
             timeout=10
         ).json()
+
         pair = list(r["result"].keys())[0]
         return float(r["result"][pair]["c"][0])
     except Exception as e:
@@ -40,6 +45,7 @@ def get_rsi(period=14):
             "https://api.kraken.com/0/public/OHLC?pair=ETHUSDT&interval=5",
             timeout=10
         ).json()
+
         pair = list(r["result"].keys())[0]
         closes = [float(c[4]) for c in r["result"][pair]][-100:]
 
@@ -54,38 +60,21 @@ def get_rsi(period=14):
 
         rs = avg_gain / avg_loss
         return round(100 - (100 / (1 + rs)), 2)
+
     except Exception as e:
         print("Erro RSI:", e, flush=True)
         return None
 
 # ================== NÍVEIS ==================
 NIVEIS = [
-    {"nivel": 3238, "tf": "4H"},
     {"nivel": 3000, "tf": "1D"},
+    {"nivel": 3238, "tf": "4H"},
     {"nivel": 3500, "tf": "1W"},
 ]
 
 status = {}
 
-# ================== NEWS ETH (RSS) ==================
-RSS_FEEDS = [
-    "https://cointelegraph.com/rss/tag/ethereum",
-    "https://cryptonews.com/news/ethereum/feed/"
-]
-
-ultimas_news = set()
-
-def check_news():
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:2]:
-            if entry.link not in ultimas_news:
-                ultimas_news.add(entry.link)
-                send_telegram(
-                    f"📰 *Notícia ETH*\n\n"
-                    f"*{entry.title}*\n"
-                    f"{entry.link}"
-                )
+send_telegram("🤖 *Bot ETH iniciado com sucesso!*")
 
 # ================== LOOP PRINCIPAL ==================
 while True:
@@ -93,9 +82,12 @@ while True:
         preco = get_eth_price()
         rsi = get_rsi()
 
-        if not preco or not rsi:
+        if preco is None or rsi is None:
+            print("Dados inválidos, aguardando...", flush=True)
             time.sleep(30)
             continue
+
+        print(f"[{datetime.now()}] ETH: {preco} | RSI: {rsi}", flush=True)
 
         for n in NIVEIS:
             nivel = n["nivel"]
@@ -112,6 +104,7 @@ while True:
 
             if dist <= 0.001 and not status[key]:
                 tipo = "SUPORTE" if preco > nivel else "RESISTÊNCIA"
+
                 send_telegram(
                     f"{'🟢' if tipo=='SUPORTE' else '🔴'} *{tipo} {tf}*\n\n"
                     f"Preço: `{preco:.2f}`\n"
@@ -119,9 +112,9 @@ while True:
                     f"RSI: `{rsi}`\n\n"
                     f"_Não é recomendação de investimento_"
                 )
+
                 status[key] = True
 
-        check_news()
         time.sleep(300)
 
     except Exception as e:
